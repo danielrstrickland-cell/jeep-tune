@@ -1,0 +1,49 @@
+name: Build Jeep Tune
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Test core and build the app
+        run: |
+          set -o pipefail
+          gradle :core:runCoreTests :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk jeep-tune.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tune-${{ github.run_number }}
+          name: Jeep Tune (build ${{ github.run_number }})
+          body: Install jeep-tune.apk on the tablet.
+          files: jeep-tune.apk
+
+      - name: Report a failed build as an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo '```'; tail -n 150 build.log 2>/dev/null || echo "no build log"; echo '```'; } > body.md
+          gh issue create --repo "${{ github.repository }}" --title "Build ${{ github.run_number }} failed" --body-file body.md

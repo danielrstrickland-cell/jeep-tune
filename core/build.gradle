@@ -1,0 +1,16 @@
+plugins {
+    id 'java-library'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+// Core tests use an in-repo harness (no external libraries): run them with `gradle :core:runCoreTests`.
+tasks.register('runCoreTests', JavaExec) {
+    group = 'verification'
+    description = 'Runs the core unit tests (TestMain harness).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.strickland.jeeptune.core.TestMain'
+}

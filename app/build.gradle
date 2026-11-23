@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Build number from GitHub Actions; it is also the version code the update check compares against.
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int
+
+// The signing key is committed as base64 text (the GitHub connector can only push text files).
+// A fixed key lets every new build install over the previous one.
+def keystoreFile = layout.buildDirectory.file('signing/jeeptune.keystore').get().asFile
+if (!keystoreFile.exists()) {
+    keystoreFile.parentFile.mkdirs()
+    keystoreFile.bytes = file('jeeptune.keystore.b64').text.replaceAll('\\s', '').decodeBase64()
+}
+
+android {
+    namespace 'com.strickland.jeeptune'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.strickland.jeeptune'
+        minSdk 26
+        targetSdk 35
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    signingConfigs {
+        jeeptune {
+            storeFile keystoreFile
+            storePassword 'jeeptune'
+            keyAlias 'jeeptune'
+            keyPassword 'jeeptune'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.jeeptune
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation project(':core')
+}

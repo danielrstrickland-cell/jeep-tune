@@ -1,0 +1,130 @@
+package com.strickland.jeeptune.core;
+
+import java.io.IOException;
+
+/** Runs one read job address by address, in order, with the stop rules. */
+public final class ReadRunner {
+
+    public enum Stop {
+        COMPLETE("Read complete."),
+        PAUSED("Paused and saved."),
+        NOT_READY("Not started: the engine computer did not answer."),
+        ENGINE_RUNNING("Stopped and saved: engine speed is above 0."),
+        LOW_BATTERY("Stopped and saved: battery below 12.0 V."),
+        NO_ANSWER("Stopped and saved: 5 requests in a row got no answer."),
+        RESUME_MISMATCH("Cannot resume: computer data changed or different computer. Start a new read."),
+        ERROR("Stopped and saved: dongle link lost.");
+
+        public final String message;
+        Stop(String m) { message = m; }
+    }
+
+    public static final int CHECK_EVERY = 256, MAX_FAILS = 5, RESUME_BYTES = 16;
+
+    private final Ecu ecu;
+    private volatile boolean stopRequested;
+    private int fails;
+    /** Test hook: pause after this many reads in a run (-1 = off). */
+    int requestStopAfterForTest = -1;
+    private int readsThisRun;
+
+    public ReadRunner(Ecu ecu) { this.ecu = ecu; }
+
+    public void requestStop() { stopRequested = true; }
+
+    public Stop run(ReadJob job) {
+        stopRequested = false;
+        fails = 0;
+        readsThisRun = 0;
+        try {
+            try {
+                Stop s = start(job);
+                if (s != null) return s;
+                return loop(job);
+            } finally {
+                job.flush();
+            }
+        } catch (IOException e) {
+            try { job.flush(); } catch (IOException ignored) { }
+            return Stop.ERROR;
+        }
+    }
+
+    private Stop start(ReadJob job) throws IOException {
+        ecu.setup(job.fastTiming);
+        Ecu.Check c = ecu.check();
+        Stop s = judge(c);
+        if (s != null) return s == Stop.NO_ANSWER ? Stop.NOT_READY : s;
+        if (job.next > 0) {
+            int n = Math.min(RESUME_BYTES, job.next);
+            for (int i = 0; i < n; i++) {
+                int addr = job.next - n + i;
+                Ecu.Reply r = readAddr(job, addr);
+                if (r == null) { job.resumeCheck = "no answer"; return Stop.NO_ANSWER; }
+                if ((r.value & 0xff) != (job.data[addr] & 0xff)) {
+                    job.resumeCheck = "FAILED: byte at " + String.format("%06X", addr) + " differs";
+                    return Stop.RESUME_MISMATCH;
+                }
+            }
+            job.resumeCheck = "passed (last " + n + " saved bytes re-read, all match)";
+        } else {
+            job.resumeCheck = "";
+        }
+        job.sessions++;
+        job.flush();
+        return null;
+    }
+
+    private Stop judge(Ecu.Check c) {
+        if (!c.answering) return Stop.NO_ANSWER;
+        if (c.rpm > 0) return Stop.ENGINE_RUNNING;
+        if (c.volts < Gate.MIN_VOLTS) return Stop.LOW_BATTERY;
+        return null;
+    }
+
+    private Stop loop(ReadJob job) throws IOException {
+        int sinceCheck = 0;
+        while (job.next < job.size) {
+            if (stopRequested) return Stop.PAUSED;
+            if (sinceCheck >= CHECK_EVERY) {
+                Ecu.Check c = ecu.check();
+                if (!c.answering) {
+                    if (++fails >= MAX_FAILS) return Stop.NO_ANSWER;
+                    continue;
+                }
+                Stop s = judge(c);
+                if (s != null) return s;
+                fails = 0;
+                sinceCheck = 0;
+            }
+            Ecu.Reply r = readAddr(job, job.next);
+            if (r == null) return Stop.NO_ANSWER;
+            job.advance(r.value);
+            job.recordMs(r.ms);
+            sinceCheck++;
+            if (requestStopAfterForTest >= 0 && ++readsThisRun >= requestStopAfterForTest) stopRequested = true;
+            if (job.next % ReadJob.FLUSH_EVERY == 0) job.flush();
+        }
+        return Stop.COMPLETE;
+    }
+
+    /** One address, retried until it answers; null after 5 failed requests in a row. */
+    private Ecu.Reply readAddr(ReadJob job, int addr) throws IOException {
+        while (true) {
+            Ecu.Reply r = ecu.readByte(addr);
+            long now = System.currentTimeMillis();
+            String ts = new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date(now));
+            if (r.ok) {
+                fails = 0;
+                job.log(ts + " TX " + r.tx + " RX " + r.rx + " " + r.ms + " ms",
+                        "TX " + r.tx + "  →  RX " + r.rx + "   " + r.ms + " ms");
+                return r;
+            }
+            job.retries++;
+            fails++;
+            job.log(ts + " TX " + r.tx + " RX " + r.rx + " " + r.ms + " ms",
+                    "TX " + r.tx + "  →  " + (r.rx.equals("no answer") ? "no answer" : "bad answer " + r.rx) + ", retry " + fails);
+            if (fails >= MAX_FAILS) return null;
+        }
+    }
+}
