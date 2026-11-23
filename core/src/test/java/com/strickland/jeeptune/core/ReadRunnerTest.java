@@ -24,7 +24,7 @@ public final class ReadRunnerTest {
     public static void readsOneKbInOrderAndSaves() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.FULL, 1));
         ReadRunner rr = new ReadRunner(new Ecu(FakeEcu.attach(e)));
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, rr.run(j), "outcome");
         for (int i = 0; i < ReadJob.KB1; i++) T.eq(e.rom[i], j.data[i], "byte " + i);
         ReadJob back = new JobStore(j.dir.getParentFile()).load(j.id);
@@ -49,19 +49,19 @@ public final class ReadRunnerTest {
     public static void acceptsAnswerWithoutEchoPrefixButNotWrongAddress() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 2));
         e.echoPrefix26 = false;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "no-prefix answers");
         FakeEcu w = new FakeEcu(rom(ReadJob.KB1, 2));
         w.wrongEcho = true;
         w.wrongEchoAfterReads = 3;   // probe passes, then every answer has the wrong address
-        ReadJob j2 = store().create(ReadJob.KB1, false, null);
+        ReadJob j2 = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.NO_ANSWER, new ReadRunner(new Ecu(FakeEcu.attach(w))).run(j2), "wrong address never accepted");
         T.eq(0, j2.next, "nothing stored");
         T.eq(5, j2.retries, "five failed requests");
     }
 
     private static void unknownFormat(FakeEcu e, String what) throws Exception {
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.UNKNOWN_FORMAT, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), what);
         T.eq("Unknown answer format. Tap Save .bin + log and send the log.", ReadRunner.Stop.UNKNOWN_FORMAT.message, "message");
         T.eq(0, j.next, "nothing stored: " + what);
@@ -73,7 +73,7 @@ public final class ReadRunnerTest {
     public static void shapeAConfirmedAndAddressZeroStored() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 11));
         e.rom[0] = 0x0f;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
         T.eq((byte) 0x0f, j.data[0], "00 00 00 00 0f stored as 0x0f");
         String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
@@ -85,7 +85,7 @@ public final class ReadRunnerTest {
     public static void shapeAWith26PrefixAccepted() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 12));
         e.prefixByte = 0x26;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "26 01 23 45 7a style");
         T.eq(e.rom[5], j.data[5], "value");
         T.eq(Ecu.Shape.A, Ecu.shapeOf(Hex.bytes("26 01 23 45 7a"), 0x012345), "shape");
@@ -104,7 +104,7 @@ public final class ReadRunnerTest {
     public static void shapeCFromRealCarConfirmedAndUsed() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 16));
         e.override = ReadRunnerTest::realAnswer;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         ReadRunner rr = new ReadRunner(new Ecu(FakeEcu.attach(e)));
         rr.requestStopAfterForTest = 1;
         T.eq(ReadRunner.Stop.PAUSED, rr.run(j), "paused after first byte");
@@ -126,7 +126,7 @@ public final class ReadRunnerTest {
     public static void shapeBConfirmedAndUsed() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 13));
         e.echoPrefix26 = false;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
         for (int i = 0; i < ReadJob.KB1; i++) T.eq(e.rom[i], j.data[i], "byte " + i);
         String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
@@ -153,7 +153,7 @@ public final class ReadRunnerTest {
     public static void probeRetriesNoAnswerUpToThreeTimes() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 15));
         e.failAt.put(0x012345, 2);
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "two misses then answer");
         FakeEcu f = new FakeEcu(rom(ReadJob.KB1, 15));
         f.failAt.put(0x012345, 3);
@@ -163,7 +163,7 @@ public final class ReadRunnerTest {
     public static void retriesAFailedAddressAndCounts() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 3));
         e.failAt.put(10, 3);
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
         T.eq(3, j.retries, "retries");
         T.eq(e.rom[10], j.data[10], "byte 10 after retries");
@@ -172,7 +172,7 @@ public final class ReadRunnerTest {
     public static void stopsAfterFiveFailuresInARowAndResumes() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 4));
         JobStore st = store();
-        ReadJob j = st.create(ReadJob.KB1, false, null);
+        ReadJob j = st.create(ReadJob.KB1, Timing.NORMAL, null);
         ReadRunner rr = new ReadRunner(new Ecu(FakeEcu.attach(e)));
         e.failAt.put(100, 5);
         T.eq(ReadRunner.Stop.NO_ANSWER, rr.run(j), "auto-stop");
@@ -192,7 +192,7 @@ public final class ReadRunnerTest {
         byte[] a = rom(ReadJob.KB1, 5);
         FakeEcu e = new FakeEcu(a);
         JobStore st = store();
-        ReadJob j = st.create(ReadJob.KB1, false, null);
+        ReadJob j = st.create(ReadJob.KB1, Timing.NORMAL, null);
         e.failAt.put(200, 5);
         new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j);
         byte[] b = a.clone();
@@ -207,23 +207,23 @@ public final class ReadRunnerTest {
     public static void stopsWhenEngineStartsOrBatteryDrops() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 6));
         e.rpmAfterReads = 300;
-        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.ENGINE_RUNNING, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "engine");
         T.eq(512, j.next, "stops at the next 256-byte check");
         FakeEcu b = new FakeEcu(rom(ReadJob.KB1, 6));
         b.volts = 11.9;
-        ReadJob j2 = store().create(ReadJob.KB1, false, null);
+        ReadJob j2 = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.LOW_BATTERY, new ReadRunner(new Ecu(FakeEcu.attach(b))).run(j2), "battery at start");
         T.eq(0, j2.next, "nothing read");
         FakeEcu n = new FakeEcu(rom(ReadJob.KB1, 6));
         n.answering = false;
-        ReadJob j3 = store().create(ReadJob.KB1, false, null);
+        ReadJob j3 = store().create(ReadJob.KB1, Timing.NORMAL, null);
         T.eq(ReadRunner.Stop.NOT_READY, new ReadRunner(new Ecu(FakeEcu.attach(n))).run(j3), "not answering");
     }
 
     public static void stopRequestSavesAndFastTimingIsSent() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 7));
-        ReadJob j = store().create(ReadJob.KB1, true, null);
+        ReadJob j = store().create(ReadJob.KB1, Timing.FAST, null);
         ReadRunner rr = new ReadRunner(new Ecu(FakeEcu.attach(e)));
         rr.requestStopAfterForTest = 70;
         T.eq(ReadRunner.Stop.PAUSED, rr.run(j), "paused");
@@ -235,9 +235,9 @@ public final class ReadRunnerTest {
     public static void verifiedCopyAndMismatchReport() throws Exception {
         byte[] a = rom(ReadJob.KB1, 8);
         JobStore st = store();
-        ReadJob first = st.create(ReadJob.KB1, false, null);
+        ReadJob first = st.create(ReadJob.KB1, Timing.NORMAL, null);
         new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(a)))).run(first);
-        ReadJob second = st.create(ReadJob.KB1, false, first.id);
+        ReadJob second = st.create(ReadJob.KB1, Timing.NORMAL, first.id);
         new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(a)))).run(second);
         JobStore.Compared c = st.compare(second);
         T.ok(c.verified && c.mismatches == 0, "verified");
@@ -245,13 +245,55 @@ public final class ReadRunnerTest {
         T.eq(first.id, st.load(second.id).verifiedOf, "second marked");
         byte[] b = a.clone();
         b[5] ^= 1; b[900] ^= 1;
-        ReadJob third = st.create(ReadJob.KB1, false, first.id);
+        ReadJob third = st.create(ReadJob.KB1, Timing.NORMAL, first.id);
         new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(b)))).run(third);
         JobStore.Compared d = st.compare(third);
         T.ok(!d.verified, "not verified");
         T.eq(2, d.mismatches, "count");
         T.eq(5, d.first.get(0), "first address");
         T.eq(900, d.first.get(1), "second address");
+    }
+
+    public static void timingFasterIsSentAndLogged() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 20));
+        ReadJob j = store().create(ReadJob.KB1, Timing.NORMAL, null);
+        j.timing = Timing.FASTER;   // chosen at session start, not fixed per job
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
+        T.ok(e.sent.contains("60 03 00 0a 07 d0 00 14 00 05"), "faster timing sent");
+        T.ok(!e.sent.contains(Frames.TIMING_NORMAL), "normal not sent");
+        String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
+        T.ok(log.contains("session 1 timing: faster 10 ms"), "timing logged");
+        onlyAllowed(e);
+    }
+
+    public static void summaryText() throws Exception {
+        byte[] a = rom(ReadJob.KB1, 21);
+        JobStore st = store();
+        ReadJob first = st.create(ReadJob.KB1, Timing.FAST, null);
+        FakeEcu e = new FakeEcu(a);
+        e.override = ad -> Hex.bytes("23 23 45 45 80");
+        T.eq(ReadRunner.Stop.UNKNOWN_FORMAT, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(first), "unknown on first");
+        T.ok(Summary.build(first, st).contains("Format: not confirmed"), "unconfirmed shown");
+        ReadJob f2 = st.create(ReadJob.KB1, Timing.FAST, null);
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(a)))).run(f2), "first read");
+        ReadJob second = st.create(ReadJob.KB1, Timing.FASTER, f2.id);
+        byte[] b = a.clone();
+        b[3] ^= 1; b[700] ^= 1;
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(b)))).run(second), "second read");
+        String s = Summary.build(second, st);
+        T.ok(s.split("\n").length <= 40, "short: " + s);
+        T.ok(s.contains("Bytes read: 1024 of 1024 (100%)"), "bytes: " + s);
+        T.ok(s.contains("session 1 timing: faster 10 ms"), "timing: " + s);
+        T.ok(s.contains("format confirmed") || s.contains("Format: A"), "format: " + s);
+        T.ok(s.contains("PROBE TX 26 01 23 45 -> RX"), "probe: " + s);
+        T.ok(s.contains("Read complete."), "stop: " + s);
+        T.ok(s.contains("verified no, mismatches 2, first 000003 0002BC"), "compare: " + s);
+        T.ok(s.contains("Read time per request: avg"), "ms: " + s);
+        T.ok(s.contains("SHA-256 of flash.bin: " + Summary.sha256(new File(second.dir, "flash.bin"))), "sha");
+        T.eq(64, Summary.sha256(new File(second.dir, "flash.bin")).length(), "sha length");
+        ReadJob ok = st.create(ReadJob.KB1, Timing.NORMAL, f2.id);
+        new ReadRunner(new Ecu(FakeEcu.attach(new FakeEcu(a)))).run(ok);
+        T.ok(Summary.build(ok, st).contains("verified yes, mismatches 0"), "match");
     }
 
     public static void formatting() {

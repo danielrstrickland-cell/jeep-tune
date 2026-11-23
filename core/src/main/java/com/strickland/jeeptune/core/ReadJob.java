@@ -21,7 +21,7 @@ public final class ReadJob {
     public final byte[] data;
     public volatile int next;
     public volatile int sessions, retries;
-    public volatile boolean fastTiming;
+    public volatile Timing timing = Timing.NORMAL;
     public volatile String verifiedOf = "", compareTo = "";
     public long createdAt, updatedAt;
     public volatile long lastSaveMs;
@@ -43,11 +43,11 @@ public final class ReadJob {
 
     public boolean complete() { return next >= size; }
 
-    static ReadJob create(File root, String id, int size, boolean fast, String compareTo) throws IOException {
+    static ReadJob create(File root, String id, int size, Timing timing, String compareTo) throws IOException {
         File dir = new File(root, id);
         if (!dir.mkdirs() && !dir.isDirectory()) throw new IOException("cannot create " + dir);
         ReadJob j = new ReadJob(dir, id, size);
-        j.fastTiming = fast;
+        j.timing = timing;
         j.compareTo = compareTo == null ? "" : compareTo;
         j.createdAt = j.updatedAt = System.currentTimeMillis();
         try (RandomAccessFile f = new RandomAccessFile(new File(dir, "flash.bin"), "rw")) { f.setLength(size); }
@@ -62,7 +62,7 @@ public final class ReadJob {
         j.sessions = (int) num(p, "sessions");
         j.retries = (int) num(p, "retries");
         j.savedAvgMs = num(p, "avgMs");
-        j.fastTiming = "fast".equals(str(p, "timing"));
+        j.timing = Timing.parse(str(p, "timing"));
         j.createdAt = num(p, "createdAt");
         j.updatedAt = num(p, "updatedAt");
         j.verifiedOf = str(p, "verifiedOf");
@@ -136,7 +136,7 @@ public final class ReadJob {
         savedAvgMs = avgMs();
         String s = "{\"jobId\":\"" + id + "\",\"size\":" + size + ",\"nextAddress\":" + flushed
                 + ",\"sessions\":" + sessions + ",\"retries\":" + retries + ",\"avgMs\":" + savedAvgMs
-                + ",\"timing\":\"" + (fastTiming ? "fast" : "normal") + "\",\"createdAt\":" + createdAt
+                + ",\"timing\":\"" + timing.key + "\",\"createdAt\":" + createdAt
                 + ",\"updatedAt\":" + updatedAt + ",\"verifiedOf\":\"" + verifiedOf
                 + "\",\"compareTo\":\"" + compareTo + "\"}\n";
         File tmp = new File(dir, "progress.json.tmp");

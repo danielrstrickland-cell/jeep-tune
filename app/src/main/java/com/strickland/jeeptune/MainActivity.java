@@ -26,6 +26,7 @@ import com.strickland.jeeptune.core.Fmt;
 import com.strickland.jeeptune.core.Gate;
 import com.strickland.jeeptune.core.JobStore;
 import com.strickland.jeeptune.core.ReadJob;
+import com.strickland.jeeptune.core.Timing;
 
 import java.io.IOException;
 
@@ -38,11 +39,11 @@ public final class MainActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TuneEngine eng;
     private int amount = ReadJob.FULL;
-    private boolean fast = false;
+    private Timing timing = Timing.NORMAL;
 
     private TextView chipDongle, tvCheck1, tvCheck2, tvCheck3, ic1, ic2, ic3;
     private CheckBox charger;
-    private Button bAmount1, bAmount2, bTimeN, bTimeF, bMain, bSave, bCompare;
+    private Button bAmount1, bAmount2, bTimeN, bTimeF, bTimeX, bMain, bSave, bCompare;
     private TextView tvTitle, tvDone, tvAvg, tvRetries, tvLeft, tvSessions, tvSaved, tvMsg, tvBytes, tvLog;
     private ProgressBar bar;
 
@@ -243,10 +244,13 @@ public final class MainActivity extends Activity {
         LinearLayout r2 = new LinearLayout(this);
         bTimeN = button("Normal (120 ms)", 44, 14);
         bTimeF = button("Fast (30 ms)", 44, 14);
-        bTimeN.setOnClickListener(v -> { fast = false; render(); });
-        bTimeF.setOnClickListener(v -> { fast = true; render(); });
+        bTimeX = button("Faster (10 ms)", 44, 14);
+        bTimeN.setOnClickListener(v -> { timing = Timing.NORMAL; render(); });
+        bTimeF.setOnClickListener(v -> { timing = Timing.FAST; render(); });
+        bTimeX.setOnClickListener(v -> { timing = Timing.FASTER; render(); });
         r2.addView(bTimeN, new LinearLayout.LayoutParams(0, -2, 1));
         r2.addView(bTimeF, new LinearLayout.LayoutParams(0, -2, 1));
+        r2.addView(bTimeX, new LinearLayout.LayoutParams(0, -2, 1));
         set.addView(r2, lp(-1, -2, 6));
         left.addView(set, lp(-1, -2, 14));
 
@@ -336,7 +340,8 @@ public final class MainActivity extends Activity {
         ReadJob j = eng.job;
         if (eng.running) { eng.pause(); return; }
         try {
-            if (j == null || j.complete()) j = eng.store.create(amount, fast, null);
+            if (j == null || j.complete()) j = eng.store.create(amount, timing, null);
+            j.timing = timing;
             String why = eng.start(j);
             if (why != null) Toast.makeText(this, why, Toast.LENGTH_LONG).show();
         } catch (IOException e) {
@@ -350,7 +355,7 @@ public final class MainActivity extends Activity {
         String why = Gate.blocker(eng.connected, eng.check, eng.charger);
         if (why != null) { Toast.makeText(this, why, Toast.LENGTH_LONG).show(); return; }
         try {
-            ReadJob second = eng.store.create(j.size, j.fastTiming, j.compareTo.isEmpty() ? j.id : j.compareTo);
+            ReadJob second = eng.store.create(j.size, timing, j.compareTo.isEmpty() ? j.id : j.compareTo);
             eng.start(second);
         } catch (IOException e) {
             Toast.makeText(this, "Cannot create the job: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -362,9 +367,14 @@ public final class MainActivity extends Activity {
         if (j == null) return;
         new Thread(() -> {
             String m;
-            try { m = Saver.save(getApplicationContext(), j); } catch (IOException e) { m = "Save failed: " + e.getMessage(); }
+            boolean ok = false;
+            try { m = Saver.save(getApplicationContext(), j, eng.store); ok = true; } catch (IOException e) { m = "Save failed: " + e.getMessage(); }
             final String msg = m;
-            ui.post(() -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show());
+            final boolean done = ok;
+            ui.post(() -> {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                if (done) startActivity(Saver.shareIntent(j));
+            });
         }, "saver").start();
     }
 
@@ -389,11 +399,11 @@ public final class MainActivity extends Activity {
 
         boolean locked = running || (j != null && !j.complete());
         int amt = locked && j != null ? j.size : amount;
-        boolean fst = locked && j != null ? j.fastTiming : fast;
         style(bAmount1, amt == ReadJob.KB1, !locked);
         style(bAmount2, amt == ReadJob.FULL, !locked);
-        style(bTimeN, !fst, !locked);
-        style(bTimeF, fst, !locked);
+        style(bTimeN, timing == Timing.NORMAL, !running);
+        style(bTimeF, timing == Timing.FAST, !running);
+        style(bTimeX, timing == Timing.FASTER, !running);
 
         boolean canStart = Gate.blocker(eng.connected, c, eng.charger) == null;
         bMain.setText(running ? "Pause & save" : (j != null && !j.complete() && j.next > 0) ? "Resume" : "Start");

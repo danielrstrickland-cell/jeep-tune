@@ -36,6 +36,15 @@ public final class ReadRunner {
     public void requestStop() { stopRequested = true; }
 
     public Stop run(ReadJob job) {
+        Stop s = runInner(job);
+        try {
+            job.log(ts() + " STOP " + s.message, "STOP " + s.message);
+            job.flush();
+        } catch (IOException ignored) { }
+        return s;
+    }
+
+    private Stop runInner(ReadJob job) {
         stopRequested = false;
         fails = 0;
         readsThisRun = 0;
@@ -54,7 +63,7 @@ public final class ReadRunner {
     }
 
     private Stop start(ReadJob job) throws IOException {
-        ecu.setup(job.fastTiming);
+        ecu.setup(job.timing);
         Ecu.Check c = ecu.check();
         Stop s = judge(c);
         if (s != null) return s == Stop.NO_ANSWER ? Stop.NOT_READY : s;
@@ -76,6 +85,8 @@ public final class ReadRunner {
             job.resumeCheck = "";
         }
         job.sessions++;
+        job.log(ts() + " session " + job.sessions + " timing: " + job.timing.key + " " + job.timing.ms + " ms",
+                "session " + job.sessions + " timing: " + job.timing.key + " " + job.timing.ms + " ms");
         job.flush();
         return null;
     }

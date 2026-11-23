@@ -22,13 +22,14 @@ public final class Frames {
     public static final String BAUD_SLOW_SETUP = "60 02 00 00 1e 84 00 08";
     public static final String TIMING_NORMAL = "60 03 00 78 07 d0 00 14 00 05";
     public static final String TIMING_FAST = "60 03 00 1e 07 d0 00 14 00 05";
+    public static final String TIMING_FASTER = "60 03 00 0a 07 d0 00 14 00 05";
     public static final String SPEED_FAST = "60 02 00 00 f4 24 00 08 ff";
     public static final String SPEED_SLOW = "60 02 00 00 1e 84 00 08 ff";
     public static final String RPM = "61 04 00 03 f4 0a 0b 01";
     public static final String BATTERY = "61 04 00 02 f4 0f 01";
 
     private static final Set<String> FIXED = new HashSet<>(Arrays.asList(
-            SELECT_SCI, KEEPALIVE_OFF, PINS, BAUD_SLOW_SETUP, TIMING_NORMAL, TIMING_FAST,
+            SELECT_SCI, KEEPALIVE_OFF, PINS, BAUD_SLOW_SETUP, TIMING_NORMAL, TIMING_FAST, TIMING_FASTER,
             SPEED_FAST, SPEED_SLOW, RPM, BATTERY));
 
     /** 61 04 00 04 26 HH MM LL 01: read one byte of flash at a 24-bit address. */

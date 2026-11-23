@@ -13,7 +13,7 @@ public final class FramesTest {
 
     public static void allowsExactlyTheListedFrames() {
         String[] ok = {"60 05 19 01", "60 06 00", "60 01 49 c4 21", "60 02 00 00 1e 84 00 08",
-                "60 03 00 78 07 d0 00 14 00 05", "60 03 00 1e 07 d0 00 14 00 05",
+                "60 03 00 78 07 d0 00 14 00 05", "60 03 00 1e 07 d0 00 14 00 05", "60 03 00 0a 07 d0 00 14 00 05",
                 "60 02 00 00 f4 24 00 08 ff", "60 02 00 00 1e 84 00 08 ff",
                 "61 04 00 03 f4 0a 0b 01", "61 04 00 02 f4 0f 01",
                 "61 04 00 04 26 00 00 00 01", "61 04 00 04 26 03 ff ff 01"};
@@ -41,6 +41,10 @@ public final class FramesTest {
         refused("13 01");
         refused("19 20");
         refused("");
+        refused("60 03 00 0a 07 d0 00 14 00 05 00");
+        refused("60 03 00 0a 07 d0 00 14 00 06");
+        refused("60 03 00 0a 07 d0 00 14 00 00");
+        refused("60 03 00 05 07 d0 00 14 00 05");
         refused("60 03 00 78 07 d0 00 14 00 06");  // altered config
         refused("60 07 00");
     }

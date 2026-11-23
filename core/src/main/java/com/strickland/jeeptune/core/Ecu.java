@@ -33,12 +33,12 @@ public final class Ecu {
     }
 
     /** Line set-up for the slow Chrysler SCI line, then the dongle timing. */
-    public void setup(boolean fastTiming) throws IOException {
+    public void setup(Timing timing) throws IOException {
         send(Frames.fixed(Frames.SELECT_SCI), false);
         send(Frames.fixed(Frames.KEEPALIVE_OFF), false);
         send(Frames.fixed(Frames.PINS), false);
         send(Frames.fixed(Frames.BAUD_SLOW_SETUP), false);
-        send(Frames.fixed(fastTiming ? Frames.TIMING_FAST : Frames.TIMING_NORMAL), false);
+        send(Frames.fixed(timing.frame), false);
     }
 
     /** Answer shapes seen from the computer. A: 5 bytes, bytes 1..3 = address, value = byte 4. B: 4 bytes, bytes 0..2 = address, value = byte 3. C (real car): 5 bytes MM MM LL LL VV, value = byte 4. */

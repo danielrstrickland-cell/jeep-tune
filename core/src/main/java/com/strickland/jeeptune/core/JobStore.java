@@ -14,11 +14,11 @@ public final class JobStore {
 
     public JobStore(File root) { this.root = root; }
 
-    public ReadJob create(int size, boolean fast, String compareTo) throws IOException {
+    public ReadJob create(int size, Timing timing, String compareTo) throws IOException {
         String base = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()) + (size >= ReadJob.FULL ? "-256k" : "-1k");
         String id = base;
         for (int i = 2; new File(root, id).exists(); i++) id = base + "-" + i;
-        return ReadJob.create(root, id, size, fast, compareTo);
+        return ReadJob.create(root, id, size, timing, compareTo);
     }
 
     public ReadJob load(String id) throws IOException { return ReadJob.load(new File(root, id)); }
@@ -60,7 +60,7 @@ public final class JobStore {
         for (int i = 0; i < a.size; i++) {
             if (a.data[i] != second.data[i]) {
                 c.mismatches++;
-                if (c.first.size() < 8) c.first.add(i);
+                if (c.first.size() < 10) c.first.add(i);
             }
         }
         if (c.mismatches == 0) {
