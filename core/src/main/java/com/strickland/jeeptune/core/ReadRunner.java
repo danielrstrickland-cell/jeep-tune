@@ -83,25 +83,25 @@ public final class ReadRunner {
     /** Format check before any byte of this session is stored. Probe values are only logged. */
     private Stop probe(ReadJob job) throws IOException {
         shape = null;
-        Ecu.Shape common = null;
-        boolean allFit = true;
+        java.util.EnumSet<Ecu.Shape> common = java.util.EnumSet.allOf(Ecu.Shape.class);
         for (int addr : PROBE_ADDRS) {
-            Ecu.Shape fit = null;
+            byte[] got = null;
             for (int attempt = 0; attempt < 3; attempt++) {
                 Ecu.Reply r = ecu.request(addr);
                 String line = "PROBE TX " + r.tx + " -> " + (r.data == null ? "no answer" : "RX " + r.rx);
                 job.log(ts() + " " + line + " " + r.ms + " ms", line);
-                if (r.data != null) { fit = Ecu.shapeOf(r.data, addr); break; }
+                if (r.data != null) { got = r.data; break; }
             }
-            if (fit == null || (common != null && fit != common)) allFit = false;
-            else common = fit;
+            for (Ecu.Shape sh : Ecu.Shape.values()) if (!Ecu.fits(got, addr, sh)) common.remove(sh);
         }
-        if (!allFit || common == null) {
+        Ecu.Shape picked = common.contains(Ecu.Shape.C) ? Ecu.Shape.C : common.size() == 1 ? common.iterator().next() : null;
+        boolean allFit = picked != null;
+        if (!allFit) {
             job.log(ts() + " format NOT confirmed", "format NOT confirmed");
             return Stop.UNKNOWN_FORMAT;
         }
-        shape = common;
-        job.log(ts() + " format confirmed: " + common, "format confirmed: " + common);
+        shape = picked;
+        job.log(ts() + " format confirmed: " + picked, "format confirmed: " + picked);
         return null;
     }
 

@@ -91,6 +91,38 @@ public final class ReadRunnerTest {
         T.eq(Ecu.Shape.A, Ecu.shapeOf(Hex.bytes("26 01 23 45 7a"), 0x012345), "shape");
     }
 
+    private static byte[] realAnswer(int addr) {
+        switch (addr) {
+            case 0x012345: return Hex.bytes("23 23 45 45 80");
+            case 0x02468A: return Hex.bytes("46 46 8a 8a 17");
+            case 0x013579: return Hex.bytes("35 35 79 79 19");
+            case 0: return Hex.bytes("00 00 00 00 0f");
+            default: return null;
+        }
+    }
+
+    public static void shapeCFromRealCarConfirmedAndUsed() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 16));
+        e.override = ReadRunnerTest::realAnswer;
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        ReadRunner rr = new ReadRunner(new Ecu(FakeEcu.attach(e)));
+        rr.requestStopAfterForTest = 1;
+        T.eq(ReadRunner.Stop.PAUSED, rr.run(j), "paused after first byte");
+        T.eq((byte) 0x0f, j.data[0], "000000 stored as 0x0f");
+        String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
+        T.ok(log.contains("format confirmed: C"), "confirmed C");
+        Ecu ecu = new Ecu(FakeEcu.attach(e));
+        Ecu.Reply r = ecu.readByte(0x012345, Ecu.Shape.C);
+        T.ok(r.ok && r.value == 0x80, "012345 gives 0x80");
+        e.override = ad -> Hex.bytes("24 23 45 45 80");   // wrong MM
+        T.ok(!ecu.readByte(0x012345, Ecu.Shape.C).ok, "wrong MM rejected");
+        e.override = ad -> Hex.bytes("23 23 45 46 80");   // wrong LL
+        T.ok(!ecu.readByte(0x012345, Ecu.Shape.C).ok, "wrong LL rejected");
+        FakeEcu bad = new FakeEcu(rom(ReadJob.KB1, 16));
+        bad.override = ad -> ad == 0x02468A ? Hex.bytes("46 47 8a 8a 17") : realAnswer(ad);
+        unknownFormat(bad, "C with wrong MM at a probe");
+    }
+
     public static void shapeBConfirmedAndUsed() throws Exception {
         FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 13));
         e.echoPrefix26 = false;
