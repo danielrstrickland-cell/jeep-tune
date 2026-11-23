@@ -442,7 +442,7 @@ public final class MainActivity extends Activity {
         tvLog.setText(lines.length == 0 ? "-" : android.text.TextUtils.join("\n", lines));
 
         boolean done = j != null && j.complete() && !running;
-        style(bSave, false, done);
+        style(bSave, false, j != null && !running && new java.io.File(j.dir, "log.txt").exists());
         style(bCompare, false, done && canStart);
         if (running) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

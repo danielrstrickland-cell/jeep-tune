@@ -35,9 +35,9 @@ public final class ReadRunnerTest {
         T.ok(new File(j.dir, "log.txt").length() > 0, "log written");
         onlyAllowed(e);
         // addresses requested strictly in order
-        int prev = -1;
+        int prev = -1, seen = 0;
         for (String s : e.sent) {
-            if (s.startsWith("61 04 00 04 26")) {
+            if (s.startsWith("61 04 00 04 26") && ++seen > 3) {   // first three are the format probe
                 String[] p = s.split(" ");
                 int a = (Integer.parseInt(p[5], 16) << 16) | (Integer.parseInt(p[6], 16) << 8) | Integer.parseInt(p[7], 16);
                 T.ok(a == prev + 1, "in order at " + a);
@@ -53,10 +53,79 @@ public final class ReadRunnerTest {
         T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "no-prefix answers");
         FakeEcu w = new FakeEcu(rom(ReadJob.KB1, 2));
         w.wrongEcho = true;
+        w.wrongEchoAfterReads = 3;   // probe passes, then every answer has the wrong address
         ReadJob j2 = store().create(ReadJob.KB1, false, null);
         T.eq(ReadRunner.Stop.NO_ANSWER, new ReadRunner(new Ecu(FakeEcu.attach(w))).run(j2), "wrong address never accepted");
         T.eq(0, j2.next, "nothing stored");
         T.eq(5, j2.retries, "five failed requests");
+    }
+
+    private static void unknownFormat(FakeEcu e, String what) throws Exception {
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        T.eq(ReadRunner.Stop.UNKNOWN_FORMAT, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), what);
+        T.eq("Unknown answer format. Tap Save .bin + log and send the log.", ReadRunner.Stop.UNKNOWN_FORMAT.message, "message");
+        T.eq(0, j.next, "nothing stored: " + what);
+        for (byte b : j.data) T.eq((byte) 0, b, "data untouched: " + what);
+        T.ok(new File(j.dir, "log.txt").length() > 0, "probe logged: " + what);
+        onlyAllowed(e);
+    }
+
+    public static void shapeAConfirmedAndAddressZeroStored() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 11));
+        e.rom[0] = 0x0f;
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
+        T.eq((byte) 0x0f, j.data[0], "00 00 00 00 0f stored as 0x0f");
+        String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
+        T.ok(log.contains("PROBE TX 26 01 23 45 -> RX 00 01 23 45 "), "probe logged");
+        T.ok(log.contains("format confirmed: A"), "confirmed A");
+        T.ok(e.sent.get(e.sent.size() - 1) != null, "sent");
+    }
+
+    public static void shapeAWith26PrefixAccepted() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 12));
+        e.prefixByte = 0x26;
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "26 01 23 45 7a style");
+        T.eq(e.rom[5], j.data[5], "value");
+        T.eq(Ecu.Shape.A, Ecu.shapeOf(Hex.bytes("26 01 23 45 7a"), 0x012345), "shape");
+    }
+
+    public static void shapeBConfirmedAndUsed() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 13));
+        e.echoPrefix26 = false;
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "outcome");
+        for (int i = 0; i < ReadJob.KB1; i++) T.eq(e.rom[i], j.data[i], "byte " + i);
+        String log = new String(Files.readAllBytes(new File(j.dir, "log.txt").toPath()));
+        T.ok(log.contains("format confirmed: B"), "confirmed B");
+    }
+
+    public static void unknownOrMixedProbeAnswersStopAndStoreNothing() throws Exception {
+        FakeEcu a = new FakeEcu(rom(ReadJob.KB1, 14));
+        a.override = ad -> new byte[]{1, 0x23, 0x45, 0, 0x7a};            // 01 23 45 00 7a
+        unknownFormat(a, "address in wrong place");
+        FakeEcu w = new FakeEcu(rom(ReadJob.KB1, 14));
+        w.wrongEcho = true;
+        unknownFormat(w, "wrong address");
+        FakeEcu m = new FakeEcu(rom(ReadJob.KB1, 14));
+        m.override = ad -> ad == 0x02468A ? new byte[]{1, 2, 3, 4} : null;   // 3rd and 1st differ in shape
+        m.override = ad -> ad == 0x02468A ? new byte[]{0x02, 0x46, (byte) 0x8A, 9} : null;
+        unknownFormat(m, "mixed A and B");
+        FakeEcu n = new FakeEcu(rom(ReadJob.KB1, 14));
+        n.answering = true;
+        n.override = ad -> ad == 0x013579 ? new byte[]{0, 0} : null;
+        unknownFormat(n, "odd length");
+    }
+
+    public static void probeRetriesNoAnswerUpToThreeTimes() throws Exception {
+        FakeEcu e = new FakeEcu(rom(ReadJob.KB1, 15));
+        e.failAt.put(0x012345, 2);
+        ReadJob j = store().create(ReadJob.KB1, false, null);
+        T.eq(ReadRunner.Stop.COMPLETE, new ReadRunner(new Ecu(FakeEcu.attach(e))).run(j), "two misses then answer");
+        FakeEcu f = new FakeEcu(rom(ReadJob.KB1, 15));
+        f.failAt.put(0x012345, 3);
+        unknownFormat(f, "three misses");
     }
 
     public static void retriesAFailedAddressAndCounts() throws Exception {

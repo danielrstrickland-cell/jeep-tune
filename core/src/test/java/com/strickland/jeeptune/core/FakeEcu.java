@@ -13,6 +13,9 @@ final class FakeEcu implements ByteLink {
     final List<String> sent = new ArrayList<>();
     boolean echoPrefix26 = true;      // answer 26 HH MM LL VV (else HH MM LL VV)
     boolean wrongEcho = false;
+    int wrongEchoAfterReads = 0;      // wrong address echo only after this many 26 requests
+    int prefixByte = 0;               // byte 0 of a shape A answer (the real computer sends 00)
+    java.util.function.Function<Integer, byte[]> override;   // custom answer for a 26 request
     boolean answering = true;
     int rpm = 0;
     double volts = 12.6;
@@ -49,9 +52,10 @@ final class FakeEcu implements ByteLink {
                 else if (left != null && left > 0) { failAt.put(addr, left - 1); }
                 else {
                     lastReadAddr = addr;
-                    int v = rom[addr] & 0xff;
-                    byte h = inner[5], m = inner[6], l = (byte) (wrongEcho ? inner[7] + 1 : inner[7]);
-                    data = echoPrefix26 ? new byte[]{0x26, h, m, l, (byte) v} : new byte[]{h, m, l, (byte) v};
+                    int v = addr < rom.length ? rom[addr] & 0xff : (addr * 7 + 3) & 0xff;
+                    byte h = inner[5], m = inner[6], l = (byte) (wrongEcho && reads > wrongEchoAfterReads ? inner[7] + 1 : inner[7]);
+                    data = echoPrefix26 ? new byte[]{(byte) prefixByte, h, m, l, (byte) v} : new byte[]{h, m, l, (byte) v};
+                    if (override != null) { byte[] o = override.apply(addr); if (o != null) data = o; }
                 }
             } else if (inner[4] == (byte) 0xf4 && inner[5] == 0x0a) {
                 int raw = rpm * 8;

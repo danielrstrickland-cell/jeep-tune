@@ -11,6 +11,7 @@ public final class Ecu {
         public boolean ok;
         public int value;
         public String tx, rx;
+        public byte[] data;
         public int ms;
     }
 
@@ -40,8 +41,34 @@ public final class Ecu {
         send(Frames.fixed(fastTiming ? Frames.TIMING_FAST : Frames.TIMING_NORMAL), false);
     }
 
-    /** One byte of flash. Accepted only if the answer ends with the same three address bytes plus the value. */
-    public Reply readByte(int addr) throws IOException {
+    /** Answer shapes seen from the computer. A: 5 bytes, bytes 1..3 = address, value = byte 4. B: 4 bytes, bytes 0..2 = address, value = byte 3. */
+    public enum Shape { A, B }
+
+    /** Which shape this answer fits for this address, or null. */
+    public static Shape shapeOf(byte[] d, int addr) {
+        if (d == null) return null;
+        if (d.length == 5 && addrAt(d, 1, addr)) return Shape.A;
+        if (d.length == 4 && addrAt(d, 0, addr)) return Shape.B;
+        return null;
+    }
+
+    private static boolean addrAt(byte[] d, int off, int addr) {
+        return (d[off] & 0xff) == ((addr >> 16) & 0xff) && (d[off + 1] & 0xff) == ((addr >> 8) & 0xff)
+                && (d[off + 2] & 0xff) == (addr & 0xff);
+    }
+
+    /** One byte of flash. Accepted only if the answer has the confirmed shape and its address bytes match. */
+    public Reply readByte(int addr, Shape shape) throws IOException {
+        Reply p = request(addr);
+        if (shape != null && shapeOf(p.data, addr) == shape) {
+            p.ok = true;
+            p.value = p.data[p.data.length - 1] & 0xff;
+        }
+        return p;
+    }
+
+    /** Sends the normal 26 request and returns the raw answer (ok stays false). */
+    public Reply request(int addr) throws IOException {
         byte[] inner = Frames.read(addr);
         byte[] msg = Arrays.copyOfRange(inner, 4, 8);
         long t0 = System.nanoTime();
@@ -49,15 +76,8 @@ public final class Ecu {
         Reply p = new Reply();
         p.ms = (int) ((System.nanoTime() - t0) / 1000000L);
         p.tx = Hex.str(msg);
-        byte[] d = r.data;
-        p.rx = d == null ? "no answer" : Hex.str(d);
-        if (d != null) {
-            int off = d.length == 4 ? 0 : (d.length == 5 && (d[0] & 0xff) == 0x26 ? 1 : -1);
-            if (off >= 0 && d[off] == msg[1] && d[off + 1] == msg[2] && d[off + 2] == msg[3]) {
-                p.ok = true;
-                p.value = d[off + 3] & 0xff;
-            }
-        }
+        p.data = r.data;
+        p.rx = r.data == null ? "no answer" : Hex.str(r.data);
         return p;
     }
 

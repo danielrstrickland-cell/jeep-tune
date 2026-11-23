@@ -13,6 +13,7 @@ public final class ReadRunner {
         LOW_BATTERY("Stopped and saved: battery below 12.0 V."),
         NO_ANSWER("Stopped and saved: 5 requests in a row got no answer."),
         RESUME_MISMATCH("Cannot resume: computer data changed or different computer. Start a new read."),
+        UNKNOWN_FORMAT("Unknown answer format. Tap Save .bin + log and send the log."),
         ERROR("Stopped and saved: dongle link lost.");
 
         public final String message;
@@ -24,6 +25,8 @@ public final class ReadRunner {
     private final Ecu ecu;
     private volatile boolean stopRequested;
     private int fails;
+    private Ecu.Shape shape;
+    static final int[] PROBE_ADDRS = {0x012345, 0x02468A, 0x013579};
     /** Test hook: pause after this many reads in a run (-1 = off). */
     int requestStopAfterForTest = -1;
     private int readsThisRun;
@@ -55,6 +58,8 @@ public final class ReadRunner {
         Ecu.Check c = ecu.check();
         Stop s = judge(c);
         if (s != null) return s == Stop.NO_ANSWER ? Stop.NOT_READY : s;
+        Stop f = probe(job);
+        if (f != null) return f;
         if (job.next > 0) {
             int n = Math.min(RESUME_BYTES, job.next);
             for (int i = 0; i < n; i++) {
@@ -73,6 +78,35 @@ public final class ReadRunner {
         job.sessions++;
         job.flush();
         return null;
+    }
+
+    /** Format check before any byte of this session is stored. Probe values are only logged. */
+    private Stop probe(ReadJob job) throws IOException {
+        shape = null;
+        Ecu.Shape common = null;
+        boolean allFit = true;
+        for (int addr : PROBE_ADDRS) {
+            Ecu.Shape fit = null;
+            for (int attempt = 0; attempt < 3; attempt++) {
+                Ecu.Reply r = ecu.request(addr);
+                String line = "PROBE TX " + r.tx + " -> " + (r.data == null ? "no answer" : "RX " + r.rx);
+                job.log(ts() + " " + line + " " + r.ms + " ms", line);
+                if (r.data != null) { fit = Ecu.shapeOf(r.data, addr); break; }
+            }
+            if (fit == null || (common != null && fit != common)) allFit = false;
+            else common = fit;
+        }
+        if (!allFit || common == null) {
+            job.log(ts() + " format NOT confirmed", "format NOT confirmed");
+            return Stop.UNKNOWN_FORMAT;
+        }
+        shape = common;
+        job.log(ts() + " format confirmed: " + common, "format confirmed: " + common);
+        return null;
+    }
+
+    private static String ts() {
+        return new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date());
     }
 
     private Stop judge(Ecu.Check c) {
@@ -111,7 +145,7 @@ public final class ReadRunner {
     /** One address, retried until it answers; null after 5 failed requests in a row. */
     private Ecu.Reply readAddr(ReadJob job, int addr) throws IOException {
         while (true) {
-            Ecu.Reply r = ecu.readByte(addr);
+            Ecu.Reply r = ecu.readByte(addr, shape);
             long now = System.currentTimeMillis();
             String ts = new java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(new java.util.Date(now));
             if (r.ok) {
