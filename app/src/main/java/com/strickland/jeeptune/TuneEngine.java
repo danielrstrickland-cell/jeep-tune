@@ -15,6 +15,7 @@ import com.strickland.jeeptune.core.Gate;
 import com.strickland.jeeptune.core.JobStore;
 import com.strickland.jeeptune.core.ReadJob;
 import com.strickland.jeeptune.core.ReadRunner;
+import com.strickland.jeeptune.core.Timing;
 
 import java.io.File;
 import java.io.IOException;
@@ -85,7 +86,7 @@ final class TuneEngine {
                 s = connect();
                 if (s == null) { sleep(3000); continue; }
                 Ecu ecu = new Ecu(s);
-                ecu.setup(false);
+                ecu.setup(Timing.NORMAL);
                 connected = true;
                 linkStatus = "GWBT connected";
                 while (true) {
