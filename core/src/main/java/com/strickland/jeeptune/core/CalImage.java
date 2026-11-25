@@ -2,7 +2,6 @@ package com.strickland.jeeptune.core;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -90,8 +89,8 @@ public final class CalImage {
         o.colKnown = true;
         o.colUnit = t.xScale.unit;
         o.unit = t.yScale.unit;
-        o.colDec = t.xScale.decimals();
-        o.dec = t.yScale.decimals();
+        o.colDec = Units.decimals(o.colUnit, t.xScale.decimals());
+        o.dec = Units.decimals(o.unit, t.yScale.decimals());
     }
 
     private void decodeGrid(CalDef.TableDef t, CalTable o) {
@@ -119,7 +118,7 @@ public final class CalImage {
             }
         }
         o.unit = t.scale.unit;
-        o.dec = t.scale.decimals();
+        o.dec = Units.decimals(o.unit, t.scale.decimals());
         double[] ra = axisFor(t.rows, rows), ca = axisFor(t.cols, cols);
         o.rowKnown = ra != null;
         o.colKnown = ca != null;
@@ -128,8 +127,8 @@ public final class CalImage {
         CalDef.Axis rax = def.axes.get(t.rows), cax = def.axes.get(t.cols);
         o.rowUnit = o.rowKnown ? rax.scale.unit : "index";
         o.colUnit = o.colKnown ? cax.scale.unit : "index";
-        o.rowDec = o.rowKnown ? Math.max(0, rax.scale.decimals() - 1) : 0;
-        o.colDec = o.colKnown ? cax.scale.decimals() : 0;
+        o.rowDec = o.rowKnown ? Units.decimals(o.rowUnit, Math.max(0, rax.scale.decimals() - 1)) : 0;
+        o.colDec = o.colKnown ? Units.decimals(o.colUnit, cax.scale.decimals()) : 0;
     }
 
     private double[] axisFor(String id, int n) {
@@ -161,7 +160,7 @@ public final class CalImage {
 
         public String valueText() {
             if (error != null) return "n/a";
-            int d = def.scale.decimals();
+            int d = Units.decimals(def.scale.unit, def.scale.decimals());
             String v = d == 0 ? Long.toString(Math.round(value)) : String.format(Locale.US, "%." + d + "f", value);
             return v + " " + def.scale.unit;
         }
@@ -219,27 +218,41 @@ public final class CalImage {
         public boolean good() { return sizeOk && partFound; }
     }
 
-    /** Looks for the def's part number written as text in the image, and checks the size and the def's reference hash. */
+    /** Flash addresses where the part number is stored as BCD digits (two per byte). */
+    public static final int[] PART_ADDRS = {0x273F, 0x2746};
+    public static final int PART_BYTES = 4;
+
+    /** Digits of a BCD number at addr, or null when the file is too short or a nibble is not 0-9. */
+    public String bcd(int addr, int bytes) {
+        if (addr < 0 || addr + bytes > data.length) return null;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bytes; i++) {
+            int b = data[addr + i] & 0xFF, hi = b >> 4, lo = b & 15;
+            if (hi > 9 || lo > 9) return null;
+            sb.append((char) ('0' + hi)).append((char) ('0' + lo));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Checks the part number (BCD at 0x273F, also at 0x2746) against the def's, plus the image size and the def's
+     * reference hash. Text is "Part 56041519 ✓" or says what the file holds instead.
+     */
     public PartCheck partCheck() {
         boolean size = def.imageSize == 0 || data.length == def.imageSize;
-        boolean found = !def.part.isEmpty() && indexOf(def.part.getBytes(StandardCharsets.US_ASCII)) >= 0;
-        if (!found && def.part.length() > 8) found = indexOf(def.part.substring(0, 8).getBytes(StandardCharsets.US_ASCII)) >= 0;
+        String want = def.part.length() >= 8 ? def.part.substring(0, 8) : def.part;
+        String a = bcd(PART_ADDRS[0], PART_BYTES), b = bcd(PART_ADDRS[1], PART_BYTES);
+        boolean found = !want.isEmpty() && (want.equals(a) || want.equals(b));
         boolean sha = !def.imageSha256.isEmpty() && def.imageSha256.equalsIgnoreCase(sha256());
         String t;
         if (!size) t = "Size " + data.length + " bytes, def expects " + def.imageSize;
-        else if (found) t = "Part " + def.part + " found in file";
-        else t = "Part " + def.part + " not found in file";
-        if (sha) t += " · identical to the def's reference image";
+        else if (found) t = "Part " + want + " \u2713";
+        else t = "Part mismatch: file has " + (a == null ? "no readable number" : a) + " at 0x" + Integer.toHexString(PART_ADDRS[0]).toUpperCase(Locale.ROOT)
+                + (b == null || b.equals(a) ? "" : " / " + b + " at 0x" + Integer.toHexString(PART_ADDRS[1]).toUpperCase(Locale.ROOT))
+                + ", def is " + want;
+        if (found && a != null && b != null && !a.equals(b)) t += " (other copy reads " + (want.equals(a) ? b : a) + ")";
+        if (sha) t += " \u00B7 identical to the def's reference image";
         return new PartCheck(size, found, sha, t);
-    }
-
-    private int indexOf(byte[] pat) {
-        outer:
-        for (int i = 0; i + pat.length <= data.length; i++) {
-            for (int j = 0; j < pat.length; j++) if (data[i + j] != pat[j]) continue outer;
-            return i;
-        }
-        return -1;
     }
 
     // ---------- known regions (for compare) ----------

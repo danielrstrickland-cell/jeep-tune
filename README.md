@@ -38,11 +38,11 @@ The **Tables** button on the main screen opens a **read-only** viewer for calibr
 (a saved read, or any file via the file picker). It never talks to the engine computer, sends no dongle frames (the `Frames.java`
 allow-list is untouched), and never writes or edits a `.bin`.
 
-- Shows the file name, a part-number check against the definition, and the SHA-256 (tap to copy).
+- Shows the file name, a part-number check against the definition (the part number is stored as BCD digits at flash 0x273F, also 0x2746; the viewer shows "Part 56041519 ✓" or what the file holds instead), and the SHA-256 (tap to copy).
 - Chips: Spark A, Spark B, After-start spark, Fuel A, Fuel B, Charge temp retard, Coolant retard, Idle spark curves, Idle rpm, 3-4 shift.
-  **Scalars** lists rev limit, speed constant and others with units. A `?` means the definition is not confirmed yet.
+  **Scalars** lists rev limit, speed constant and others with units (inline side panel, collapsible; so is **Changes**). A `?` means the definition is not confirmed yet.
 - Views: **Grid** heat map (rpm rows, MAP columns, tap a cell for address, raw and scaled value; pinch to zoom, swipe to change table),
-  **3D** surface (drag to rotate) and **Slice** (slider picks an rpm row, value vs MAP). Curves show as a line chart.
+  **3D** surface and **Slice** (slider picks an rpm row, value vs MAP). Curves show as a line chart.
   Tables whose axes are not known yet show index numbers 0..n.
 - **Compare with...** (default pick: the first verified read): differing cells are outlined (warm = raised, cool = lowered),
   **Changes** lists cells and bytes, including bytes outside any known table. **Ghost stock** draws the compare file under the 3D surface.
@@ -51,8 +51,35 @@ allow-list is untouched), and never writes or edits a `.bin`.
 - **Live dot:** while the viewer is open it listens for the broadcast `com.strickland.jeepdash.action.LIVE` from Jeep Dash
   (float `rpm`, float `map_kpa`, long `t`) and shows a dot at the current cell.
 
+### Tables: help (gestures, pen, tilt, renderer)
+
+**Renderer setting.** The header button **Renderer: Native 3D / Web** switches drawing and remembers the choice. *Native* is the default:
+OpenGL ES 3.0 (2.0 if 3.0 is missing) for the 3D surface and Canvas for the grid and slice, with no WebView. *Web* is the older plotly.js
+renderer, kept as a fallback (no tilt, no pen card, no Reset view there).
+
+**Numbers.** rpm and counts are whole numbers ("5300 rpm"), kPa whole, degrees 1 decimal, ms 2 decimals.
+
+**3D surface (touch).**
+- One finger drag: orbit. Two fingers: twist to roll, pinch to zoom, drag to pan.
+- Double-tap: reset the camera (also the **Reset view** button). Tap: select a cell.
+- Swipe in from the left or right screen edge: previous / next table. The grid and slice views use the same edge swipe; the grid also pinches and pans.
+- The surface is lit and smooth shaded in the amber ramp. **Ghost stock** draws the compare file as a translucent surface; changed cells
+  are tinted warm (raised) or cool (lowered) and outlined; **Hit map** colors by log samples. The replay/live dot glows and leaves a ~3 s trail.
+- It redraws only when something changes and runs at the display rate (90 fps on the tablet) only while a replay plays, a live dot shows, you touch, or tilt is on.
+
+**Pen (Lenovo Tab Pen / Pen Plus).**
+- Hover over the grid, slice or 3D surface: the cell is highlighted and a card shows table, rpm / MAP, value with units, raw, address,
+  the log's sample count (if a log is loaded) and stock vs this file (if comparing).
+- Barrel button (primary stylus button) or the media keys play/pause; next / previous step the replay forward / back 1 s.
+- Pen pressure is read but not used yet (reserved for a future editor).
+
+**Tilt to orbit.** The **Tilt** button orbits the 3D camera as you tilt the tablet, relative to the pose when you switched it on
+(game rotation vector sensor; gyroscope if that is missing; "no sensor" if neither). It switches itself off and greys out while the Jeep is
+moving: a Jeep Dash LIVE broadcast in the last 5 s, or GPS speed over 5 mph. GPS is used only if location permission is already
+granted in Android settings (the app never asks for it).
+
 Definition: `app/src/main/assets/defs/56041519.json` (part 56041519AE). All decoding is in `:core` (`CalImage`, `CalTable`, `ImageDiff`,
-`TuneCsv`, `Replay`) with tests on a synthetic image; drawing sits behind `TableRenderer` (currently plotly.js, bundled in
+`TuneCsv`, `Replay`) with tests on a synthetic image; drawing sits behind `TableRenderer`: `GlRenderer` (native, default; maths for camera, mesh, picking, tilt and the motion gate is in `:core`) or `PlotlyRenderer` (plotly.js bundled in
 `app/src/main/assets/viewer/`, no network needed).
 
 ## Get the app

@@ -97,7 +97,7 @@ public final class ImageDiff {
                 + (cells.size() == 1 ? "" : "s") + ", " + outside.size() + " run" + (outside.size() == 1 ? "" : "s") + " outside any known table.");
         for (CellChange c : cells) {
             out.add(String.format(Locale.US, "%s  r%d c%d  @%06X  %s -> %s %s (raw %d -> %d)", c.table, c.row, c.col, c.addr,
-                    trim(c.valOld), trim(c.valNew), c.unit, c.rawOld, c.rawNew));
+                    Units.format(c.valOld, c.unit, 3), Units.format(c.valNew, c.unit, 3), c.unit, c.rawOld, c.rawNew));
             if (out.size() >= max) break;
         }
         if (out.size() < max) {
@@ -109,11 +109,5 @@ public final class ImageDiff {
         int total = 1 + cells.size() + outside.size() + (sizeDiffers ? 1 : 0);
         if (total > out.size()) out.add("... and " + (total - out.size()) + " more");
         return out;
-    }
-
-    private static String trim(double v) {
-        String s = String.format(Locale.US, "%.3f", v);
-        if (s.indexOf('.') >= 0) s = s.replaceAll("0+$", "").replaceAll("\\.$", "");
-        return s;
     }
 }

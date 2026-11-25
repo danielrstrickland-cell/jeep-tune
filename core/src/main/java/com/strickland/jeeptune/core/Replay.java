@@ -28,6 +28,11 @@ public final class Replay {
     public double length() { return log.durationMs(); }
     public double position() { return pos; }
 
+    /** Jumps by whole seconds of log time (pen/media keys): +1 forward, -1 back. */
+    public void step(int seconds) { seek(pos + seconds * 1000.0); }
+
+    public void toggle() { if (playing) pause(); else play(); }
+
     public void seek(double ms) { pos = Math.max(0, Math.min(length(), ms)); }
     public void seekFraction(double f) { seek(f * length()); }
     public double fraction() { return length() <= 0 ? 0 : pos / length(); }

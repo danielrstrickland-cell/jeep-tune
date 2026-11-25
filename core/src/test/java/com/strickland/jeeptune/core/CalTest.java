@@ -17,11 +17,15 @@ public class CalTest {
         }
     }
 
+    /** Part number as BCD at both flash locations (0x273F and 0x2746). */
+    static void setPart(byte[] b, int... bcd) {
+        for (int i = 0; i < bcd.length; i++) { b[0x273F + i] = (byte) bcd[i]; b[0x2746 + i] = (byte) bcd[i]; }
+    }
+
     /** A 256 KB image with every def table written in its documented layout; cell values are r*9+c (low byte). */
     static byte[] image(CalDef d) {
         byte[] b = new byte[d.imageSize];
-        byte[] part = "56041519AE".getBytes(StandardCharsets.US_ASCII);
-        System.arraycopy(part, 0, b, 0x100, part.length);
+        setPart(b, 0x56, 0x04, 0x15, 0x19);
         CalDef.Axis rpm = d.axes.get("rpm17"), map = d.axes.get("map9");
         for (int i = 0; i < 17; i++) {
             int raw = (500 + i * 300) * 8;                       // 500, 800, ... rpm
@@ -119,7 +123,7 @@ public class CalTest {
         T.eq(1000 + 9 + 3, w.raw[1][3], "u16 big endian");
         T.eq(0x2B8E + 4 + 2 * (9 + 3), w.addr[1][3], "word address");
         T.near((1000 + 12) * 0.0044, w.val[1][3], 1e-9, "ms");
-        T.eq(3, w.dec, "ms decimals");
+        T.eq(2, w.dec, "ms decimals");
     }
 
     public static void curves() {
@@ -151,7 +155,7 @@ public class CalTest {
         CalDef d = realDef();
         CalImage im = new CalImage(image(d), d);
         List<CalImage.Scalar> sc = im.scalars();
-        T.eq("5300.0 rpm", sc.get(1).valueText(), "rev limit");
+        T.eq("5300 rpm", sc.get(1).valueText(), "rev limit: rpm is a whole number");
         T.eq(28800000L, sc.get(3).raw, "speed constant raw");
         T.ok(sc.get(1).line().contains("stock 5300"), "stock shown");
         T.ok(sc.get(4).line().endsWith("?"), "confidence mark");
@@ -266,5 +270,45 @@ public class CalTest {
         T.ok(s.contains(String.format("@%06X", r.addr[2][4])), "address: " + s);
         T.ok(CellInfo.describe(cur, r, 0, 0).contains("same as compare file"), "unchanged cell");
         T.eq("", CellInfo.describe(cur, null, 99, 0), "out of range");
+    }
+
+    public static void partNumberIsBcdNotAscii() {
+        CalDef d = realDef();
+        CalImage ok = new CalImage(image(d), d);
+        T.eq("56041519", ok.bcd(0x273F, 4), "BCD digits at 0x273F");
+        T.eq("56041519", ok.bcd(0x2746, 4), "BCD digits at 0x2746");
+        T.eq("Part 56041519 \u2713", ok.partCheck().text, "ok text");
+        byte[] other = image(d);
+        setPart(other, 0x56, 0x04, 0x15, 0x20);
+        CalImage.PartCheck bad = new CalImage(other, d).partCheck();
+        T.ok(!bad.partFound && !bad.good(), "different part flagged");
+        T.ok(bad.text.contains("mismatch") && bad.text.contains("56041520") && bad.text.contains("56041519"), bad.text);
+        byte[] junk = image(d);
+        junk[0x273F] = (byte) 0xAB;
+        T.eq(null, new CalImage(junk, d).bcd(0x273F, 4), "non-BCD nibble");
+        // ASCII text alone no longer counts
+        byte[] ascii = new byte[d.imageSize];
+        byte[] txt = "56041519AE".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(txt, 0, ascii, 0x100, txt.length);
+        T.ok(!new CalImage(ascii, d).partCheck().partFound, "ASCII is not the part number");
+        T.ok(new CalImage(new byte[100], d).bcd(0x273F, 4) == null, "short file");
+    }
+
+    public static void numberFormatting() {
+        CalDef d = realDef();
+        CalImage im = new CalImage(image(d), d);
+        CalTable a = im.table(d.table("sparkA"));
+        T.eq("5300", CellInfo.num(a.rowAxis[16], a.rowDec), "rpm whole");
+        T.eq(0, a.colDec, "kPa whole");
+        T.eq(1, a.dec, "degrees 1 decimal");
+        T.eq("12.5", Units.format(12.46, "deg", 3), "deg");
+        T.eq("0.53", Units.format(0.5304, "ms", 3), "ms 2 decimals");
+        T.eq("60", Units.format(59.8, "kPa", 1), "kPa");
+        T.eq("5300", Units.format(5300.2, "rpm", 1), "rpm");
+        T.eq("42", Units.format(41.7, "TPS counts above closed", 2), "counts");
+        T.eq("0.60", Units.format(0.6, "unknown", 2), "other units keep their step");
+        CalTable f = im.table(d.table("fuelA"));
+        T.ok(CellInfo.describe(f, null, 1, 3).contains("ms"), "fuel in ms");
+        T.eq(2, f.dec, "ms 2");
     }
 }

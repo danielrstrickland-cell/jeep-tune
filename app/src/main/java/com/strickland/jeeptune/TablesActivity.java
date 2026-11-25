@@ -6,10 +6,16 @@ import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Typeface;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -17,10 +23,13 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -33,6 +42,7 @@ import com.strickland.jeeptune.core.CalImage;
 import com.strickland.jeeptune.core.CalTable;
 import com.strickland.jeeptune.core.CellInfo;
 import com.strickland.jeeptune.core.ImageDiff;
+import com.strickland.jeeptune.core.MotionGate;
 import com.strickland.jeeptune.core.ReadJob;
 import com.strickland.jeeptune.core.Replay;
 import com.strickland.jeeptune.core.TableGroups;
@@ -75,7 +85,25 @@ public final class TablesActivity extends Activity implements TableRenderer.List
     private double liveRpm = Double.NaN, liveMap = Double.NaN;
     private long liveAt;
 
+    private static final String PREFS = "tables", PREF_NATIVE = "renderer_native";
+    private static final long GPS_STALE_MS = 5000;
     private TableRenderer renderer;
+    private boolean useNative = true, started;
+    private FrameLayout stage;
+    private TextView tip;
+    private Button bRenderer, bTilt, bReset, bScalars;
+    private LinearLayout panel;
+    private TextView panelBody;
+    private Button bPanelScalars, bPanelChanges;
+    private int panelTab;                     // 0 hidden, 1 scalars, 2 changes
+    private TiltController tilt;
+    private boolean tiltOn;
+    private long lastLiveBroadcast;           // elapsedRealtime of the last LIVE broadcast, any content
+    private double gpsMph = Double.NaN;
+    private long gpsAt;
+    private LocationManager locMgr;
+    private boolean penButton;
+    private boolean lastAnimating;
     private TextView tvFile, tvPart, tvSha, tvCompare, tvInfo, tvReplayTime, tvLogName, tvSliceLabel;
     private LinearLayout chipRow, subRow, replayRow, sliceBox;
     private Button bGrid, bSurface, bSlice, bChanges, bPlay, bS1, bS4, bS16;
@@ -86,11 +114,13 @@ public final class TablesActivity extends Activity implements TableRenderer.List
 
     private final BroadcastReceiver liveReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
+            lastLiveBroadcast = SystemClock.elapsedRealtime();
             float rpm = i.getFloatExtra("rpm", Float.NaN), map = i.getFloatExtra("map_kpa", Float.NaN);
             if (Float.isNaN(rpm) || Float.isNaN(map)) return;
             liveRpm = rpm;
             liveMap = map;
             liveAt = SystemClock.elapsedRealtime();
+            lastLiveBroadcast = liveAt;
             pushLive();
         }
     };
@@ -109,6 +139,9 @@ public final class TablesActivity extends Activity implements TableRenderer.List
                 liveMap = Double.NaN;
                 pushLive();
             }
+            updateMotionGate(now);
+            boolean anim = (replay != null && replay.playing()) || !Double.isNaN(liveRpm) || tiltOn;
+            if (anim != lastAnimating) { lastAnimating = anim; renderer.setAnimating(anim); }
             ui.postDelayed(this, 70);
         }
     };
@@ -126,9 +159,11 @@ public final class TablesActivity extends Activity implements TableRenderer.List
             return;
         }
         groups = TableGroups.build(def);
-        renderer = new PlotlyRenderer(this);
-        renderer.setListener(this);
+        useNative = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_NATIVE, true);
+        tilt = new TiltController(this, (yaw, pitch) -> { if (renderer != null) renderer.setTiltOffset(yaw, pitch); });
+        locMgr = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         setContentView(build());
+        installRenderer();
         renderChips();
         render();
     }
@@ -140,6 +175,9 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(liveReceiver, f, Context.RECEIVER_EXPORTED);
         else registerReceiver(liveReceiver, f);
         lastTick = SystemClock.elapsedRealtime();
+        started = true;
+        if (renderer != null) renderer.onResume();
+        startGps();
         ui.post(tick);
     }
 
@@ -148,6 +186,10 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         ui.removeCallbacks(tick);
         try { unregisterReceiver(liveReceiver); } catch (IllegalArgumentException ignored) { }
         if (replay != null) { replay.pause(); bPlay.setText("Play"); }
+        started = false;
+        setTilt(false);
+        stopGps();
+        if (renderer != null) { renderer.setAnimating(false); lastAnimating = false; renderer.onPause(); }
         super.onStop();
     }
 
@@ -230,17 +272,21 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         View sp = new View(this);
         head.addView(sp, new LinearLayout.LayoutParams(0, 1, 1));
         Button open = button("Open .bin"), cmp = button("Compare…"), log = button("Tune log…"), sc = button("Scalars");
+        bScalars = sc;
+        bRenderer = button("");
+        bRenderer.setOnClickListener(v -> toggleRenderer());
         bChanges = button("Changes");
         open.setOnClickListener(v -> chooseImage(false));
         cmp.setOnClickListener(v -> chooseImage(true));
         log.setOnClickListener(v -> pickDocument(REQ_LOG));
-        sc.setOnClickListener(v -> showScalars());
-        bChanges.setOnClickListener(v -> showChanges());
+        sc.setOnClickListener(v -> togglePanel(1));
+        bChanges.setOnClickListener(v -> togglePanel(2));
         head.addView(open, gap(-2, -2, 0));
         head.addView(cmp, gap(-2, -2, 8));
         head.addView(log, gap(-2, -2, 8));
         head.addView(sc, gap(-2, -2, 8));
         head.addView(bChanges, gap(-2, -2, 8));
+        head.addView(bRenderer, gap(-2, -2, 8));
         root.addView(head);
 
         LinearLayout info = row();
@@ -284,6 +330,12 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         cbGhost.setOnCheckedChangeListener((v, on) -> { showGhost = on; renderer.setShowGhost(on); });
         ctl.addView(cbHits, gap(-2, -2, 16));
         ctl.addView(cbGhost, gap(-2, -2, 8));
+        bTilt = button("Tilt: off");
+        bTilt.setOnClickListener(v -> setTilt(!tiltOn));
+        bReset = button("Reset view");
+        bReset.setOnClickListener(v -> renderer.resetCamera());
+        ctl.addView(bTilt, gap(-2, -2, 16));
+        ctl.addView(bReset, gap(-2, -2, 6));
         sliceBox = row();
         tvSliceLabel = text("", 12, AMBER_TX);
         tvSliceLabel.setMinWidth(dp(110));
@@ -297,7 +349,41 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         ((LinearLayout.LayoutParams) sliceBox.getLayoutParams()).leftMargin = dp(16);
         root.addView(ctl);
 
-        root.addView(renderer.view(), new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout mid = row();
+        stage = new FrameLayout(this);
+        tip = text("", 12, TEXT);
+        tip.setBackground(shape(0xF0161C23, AMBER, 8));
+        tip.setPadding(dp(10), dp(8), dp(10), dp(8));
+        tip.setVisibility(View.GONE);
+        tip.setElevation(dp(8));
+        mid.addView(stage, new LinearLayout.LayoutParams(0, -1, 1));
+        panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(shape(PANEL, BORDER, 8));
+        LinearLayout ph = row();
+        bPanelScalars = button("Scalars");
+        bPanelChanges = button("Changes");
+        Button hide = button("Hide ›");
+        bPanelScalars.setOnClickListener(v -> showPanel(1));
+        bPanelChanges.setOnClickListener(v -> showPanel(2));
+        hide.setOnClickListener(v -> showPanel(0));
+        ph.addView(bPanelScalars);
+        ph.addView(bPanelChanges, gap(-2, -2, 6));
+        ph.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        ph.addView(hide);
+        panel.addView(ph);
+        panelBody = text("", 12, TEXT);
+        panelBody.setTypeface(Typeface.MONOSPACE);
+        panelBody.setTextIsSelectable(true);
+        panelBody.setPadding(dp(10), dp(8), dp(10), dp(8));
+        ScrollView ps = new ScrollView(this);
+        ps.addView(panelBody);
+        panel.addView(ps, new LinearLayout.LayoutParams(-1, 0, 1));
+        panel.setVisibility(View.GONE);
+        LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(dp(340), -1);
+        pl.leftMargin = dp(8);
+        mid.addView(panel, pl);
+        root.addView(mid, new LinearLayout.LayoutParams(-1, 0, 1));
 
         replayRow = row();
         tvLogName = text("", 12, DIM);
@@ -492,6 +578,7 @@ public final class TablesActivity extends Activity implements TableRenderer.List
     // ---------- showing things ----------
 
     private void select(int g, int m) {
+        tip.setVisibility(View.GONE);
         gi = g;
         mi = m;
         renderChips();
@@ -565,6 +652,11 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         }
         tvCompare.setText(ref == null ? "" : "Compare: " + refName + (diff != null ? "  ·  " + diff.changedBytes + " bytes differ" : ""));
         bChanges.setVisibility(diff != null ? View.VISIBLE : View.GONE);
+        if (diff == null && panelTab == 2) panelTab = 0;
+        bRenderer.setText(useNative ? "Renderer: Native 3D" : "Renderer: Web");
+        bReset.setVisibility(useNative ? View.VISIBLE : View.GONE);
+        updatePanel();
+        updateTiltButton(SystemClock.elapsedRealtime());
     }
 
     @Override
@@ -593,7 +685,7 @@ public final class TablesActivity extends Activity implements TableRenderer.List
     // ---------- replay and live ----------
 
     private void togglePlay() {
-        if (replay == null) return;
+        if (replay == null || curT == null || !curT.hasRealAxes()) return;
         if (replay.playing()) { replay.pause(); bPlay.setText("Play"); }
         else { replay.play(); bPlay.setText(replay.playing() ? "Pause" : "Play"); lastTick = SystemClock.elapsedRealtime(); }
     }
@@ -624,10 +716,28 @@ public final class TablesActivity extends Activity implements TableRenderer.List
         renderer.setDot(TableRenderer.LIVE, curT.rowPos(liveRpm), curT.colPos(liveMap));
     }
 
-    // ---------- dialogs ----------
+    // ---------- side panel: scalars and changes (inline, collapsible) ----------
 
-    private void showScalars() {
-        if (cur == null) { Toast.makeText(this, "Open a .bin first", Toast.LENGTH_SHORT).show(); return; }
+    private void togglePanel(int tab) { showPanel(panelTab == tab ? 0 : tab); }
+
+    private void showPanel(int tab) {
+        panelTab = tab;
+        updatePanel();
+    }
+
+    private void updatePanel() {
+        panel.setVisibility(panelTab == 0 ? View.GONE : View.VISIBLE);
+        style(bPanelScalars, panelTab == 1);
+        style(bPanelChanges, panelTab == 2);
+        style(bScalars, panelTab == 1);
+        style(bChanges, panelTab == 2);
+        if (panelTab == 1) panelBody.setText(scalarsText());
+        else if (panelTab == 2) panelBody.setText(diff == null ? "Pick a compare file (Compare\u2026) to list what changed."
+                : android.text.TextUtils.join("\n", diff.lines(400)));
+    }
+
+    private String scalarsText() {
+        if (cur == null) return "Open a .bin first.";
         StringBuilder sb = new StringBuilder();
         List<CalImage.Scalar> now = cur.scalars();
         List<CalImage.Scalar> was = ref == null ? null : ref.scalars();
@@ -636,23 +746,154 @@ public final class TablesActivity extends Activity implements TableRenderer.List
             if (was != null && was.get(i).raw != now.get(i).raw) sb.append("\n    compare file: ").append(was.get(i).valueText());
             sb.append("\n\n");
         }
-        sb.append("? = not confirmed yet");
-        showText("Scalars", sb.toString());
+        return sb.append("? = not confirmed yet").toString();
     }
 
-    private void showChanges() {
-        if (diff == null) return;
-        showText("Changes vs " + refName, android.text.TextUtils.join("\n", diff.lines(400)));
+    // ---------- renderer choice ----------
+
+    private void installRenderer() {
+        if (renderer != null) {
+            stage.removeView(renderer.view());
+            renderer.setAnimating(false);
+            renderer.onPause();
+            renderer.destroy();
+        }
+        lastAnimating = false;
+        renderer = useNative ? new GlRenderer(this) : new PlotlyRenderer(this);
+        renderer.setListener(this);
+        stage.addView(renderer.view(), 0, new FrameLayout.LayoutParams(-1, -1));
+        if (tip.getParent() == null) stage.addView(tip, new FrameLayout.LayoutParams(-2, -2));
+        if (started) renderer.onResume();
+        renderer.setMode(mode);
+        renderer.setShowHits(showHits);
+        renderer.setShowGhost(showGhost);
+        if (tiltOn && !renderer.supportsTilt()) setTilt(false);
+        refresh();
     }
 
-    private void showText(String title, String body) {
-        TextView t = text(body, 12, TEXT);
-        t.setTypeface(Typeface.MONOSPACE);
-        t.setTextIsSelectable(true);
-        t.setPadding(dp(18), dp(8), dp(18), dp(8));
-        ScrollView s = new ScrollView(this);
-        s.addView(t);
-        new AlertDialog.Builder(this).setTitle(title).setView(s).setPositiveButton("Close", null).show();
+    private void toggleRenderer() {
+        useNative = !useNative;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_NATIVE, useNative).apply();
+        tip.setVisibility(View.GONE);
+        installRenderer();
+    }
+
+    // ---------- tilt to orbit ----------
+
+    private void setTilt(boolean on) {
+        if (on && (!tilt.available() || !renderer.supportsTilt() || motionBlocked(SystemClock.elapsedRealtime()))) on = false;
+        if (on == tiltOn) { updateTiltButton(SystemClock.elapsedRealtime()); return; }
+        tiltOn = on;
+        if (on) tilt.start(); else tilt.stop();
+        updateTiltButton(SystemClock.elapsedRealtime());
+    }
+
+    private boolean motionBlocked(long now) {
+        double mph = gpsMph;
+        if (now - gpsAt > GPS_STALE_MS) mph = Double.NaN;
+        return MotionGate.moving(now, lastLiveBroadcast, mph);
+    }
+
+    /** Tilt switches itself off and greys out while the Jeep is moving. */
+    private void updateMotionGate(long now) {
+        if (tiltOn && motionBlocked(now)) setTilt(false);
+        else updateTiltButton(now);
+    }
+
+    private String tiltShown = "";
+
+    private void updateTiltButton(long now) {
+        boolean blocked = motionBlocked(now), can = tilt.available() && renderer != null && renderer.supportsTilt();
+        String label = !tilt.available() ? "Tilt: no sensor" : blocked ? "Tilt: moving" : tiltOn ? "Tilt: on" : "Tilt: off";
+        String key = label + can;
+        if (key.equals(tiltShown)) return;
+        tiltShown = key;
+        bTilt.setEnabled(can && !blocked);
+        bTilt.setAlpha(can && !blocked ? 1f : 0.4f);
+        bTilt.setText(label);
+        style(bTilt, tiltOn);
+    }
+
+    private final LocationListener gps = new LocationListener() {
+        @Override public void onLocationChanged(Location l) {
+            gpsMph = l.hasSpeed() ? MotionGate.mph(l.getSpeed()) : Double.NaN;
+            gpsAt = SystemClock.elapsedRealtime();
+        }
+        @Override public void onStatusChanged(String p, int s, android.os.Bundle e) { }
+        @Override public void onProviderEnabled(String p) { }
+        @Override public void onProviderDisabled(String p) { gpsMph = Double.NaN; }
+    };
+
+    /** Only listens when location permission is already granted; this screen never asks for it. */
+    private void startGps() {
+        if (locMgr == null || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        try {
+            locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0f, gps);
+        } catch (SecurityException | IllegalArgumentException ignored) { }
+    }
+
+    private void stopGps() {
+        if (locMgr != null) {
+            try { locMgr.removeUpdates(gps); } catch (SecurityException ignored) { }
+        }
+        gpsMph = Double.NaN;
+    }
+
+    // ---------- pen: hover card, barrel button, media keys ----------
+
+    @Override
+    public void onHover(int r, int c, float x, float y) {
+        String body = r < 0 || curT == null ? "" : android.text.TextUtils.join("\n", CellInfo.tooltip(curT, refT, hits, r, c));
+        if (body.isEmpty()) { tip.setVisibility(View.GONE); return; }
+        tip.setText(body);
+        tip.setVisibility(View.VISIBLE);
+        tip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int w = tip.getMeasuredWidth(), h = tip.getMeasuredHeight(), sw = stage.getWidth(), sh = stage.getHeight();
+        float tx = x + dp(18), ty = y + dp(18);
+        if (tx + w > sw) tx = x - dp(18) - w;
+        if (ty + h > sh) ty = y - dp(18) - h;
+        tip.setTranslationX(Math.max(0, tx));
+        tip.setTranslationY(Math.max(0, ty));
+    }
+
+    private void penButtonCheck(MotionEvent ev) {
+        if (!Pen.isStylus(ev)) return;
+        boolean down = (ev.getButtonState() & MotionEvent.BUTTON_STYLUS_PRIMARY) != 0;
+        if (down && !penButton) togglePlay();
+        penButton = down;
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        penButtonCheck(ev);
+        return super.dispatchTouchEvent(ev);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+        penButtonCheck(ev);
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
+    @Override
+    public boolean onKeyDown(int code, KeyEvent ev) {
+        if (replay != null && ev.getRepeatCount() == 0) {
+            switch (code) {
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE: togglePlay(); return true;
+                case KeyEvent.KEYCODE_MEDIA_PLAY: if (!replay.playing()) togglePlay(); return true;
+                case KeyEvent.KEYCODE_MEDIA_PAUSE: if (replay.playing()) togglePlay(); return true;
+                case KeyEvent.KEYCODE_MEDIA_NEXT: stepReplay(1); return true;
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS: stepReplay(-1); return true;
+                default: break;
+            }
+        }
+        return super.onKeyDown(code, ev);
+    }
+
+    private void stepReplay(int seconds) {
+        if (replay == null || curT == null || !curT.hasRealAxes()) return;
+        replay.step(seconds);
+        pushReplay();
     }
 
     private void copySha() {

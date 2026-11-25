@@ -18,6 +18,8 @@ public interface TableRenderer {
         void onCell(int row, int col);
         /** +1 = swiped left (next table), -1 = swiped right (previous). */
         void onSwipe(int dir);
+        /** Pen (or mouse) hovering: row/col of the cell and the position in the renderer's view; row < 0 when it leaves. */
+        default void onHover(int row, int col, float x, float y) { }
     }
 
     View view();
@@ -31,4 +33,16 @@ public interface TableRenderer {
     void setDot(int which, double row, double col);
     void setTrail(double[] rows, double[] cols, double[] alphas);
     void destroy();
+
+    // ---- optional (native renderer only; the web renderer keeps these defaults) ----
+    /** Pause/resume with the activity (a GL surface needs it). */
+    default void onPause() { }
+    default void onResume() { }
+    /** True while something moves (replay playing, live dot, tilt): render continuously; false: only when dirty. */
+    default void setAnimating(boolean on) { }
+    default void resetCamera() { }
+    /** True when this renderer can take a tilt offset (orbit from the tablet's motion). */
+    default boolean supportsTilt() { return false; }
+    /** Extra camera yaw and pitch (radians) from tablet tilt, relative to the pose; 0, 0 clears it. */
+    default void setTiltOffset(double yawRad, double pitchRad) { }
 }
