@@ -31,6 +31,16 @@ public final class ReadRunner {
     int requestStopAfterForTest = -1;
     private int readsThisRun;
 
+    /** Test hooks: clock and sleep. */
+    java.util.function.LongSupplier clock = System::currentTimeMillis;
+    java.util.function.LongConsumer sleeper = ms -> {
+        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    };
+    private final BatteryGuard guard = new BatteryGuard();
+    /** Last battery voltage seen (-1 = none yet) and whether the read is paused for low battery. For the UI/notification. */
+    public volatile double volts = -1;
+    public volatile boolean batteryPaused;
+
     public ReadRunner(Ecu ecu) { this.ecu = ecu; }
 
     public void requestStop() { stopRequested = true; }
@@ -46,6 +56,7 @@ public final class ReadRunner {
 
     private Stop runInner(ReadJob job) {
         stopRequested = false;
+        batteryPaused = false;
         fails = 0;
         readsThisRun = 0;
         try {
@@ -67,6 +78,7 @@ public final class ReadRunner {
         Ecu.Check c = ecu.check();
         Stop s = judge(c);
         if (s != null) return s == Stop.NO_ANSWER ? Stop.NOT_READY : s;
+        volts = c.volts;
         Stop f = probe(job);
         if (f != null) return f;
         if (job.next > 0) {
@@ -129,18 +141,24 @@ public final class ReadRunner {
 
     private Stop loop(ReadJob job) throws IOException {
         int sinceCheck = 0;
+        long lastCheckMs = clock.getAsLong();
         while (job.next < job.size) {
             if (stopRequested) return Stop.PAUSED;
-            if (sinceCheck >= CHECK_EVERY) {
+            if (sinceCheck >= CHECK_EVERY || clock.getAsLong() - lastCheckMs >= BatteryGuard.CHECK_EVERY_MS) {
                 Ecu.Check c = ecu.check();
                 if (!c.answering) {
                     if (++fails >= MAX_FAILS) return Stop.NO_ANSWER;
                     continue;
                 }
-                Stop s = judge(c);
-                if (s != null) return s;
+                if (c.rpm > 0) return Stop.ENGINE_RUNNING;
+                volts = c.volts;
+                if (guard.update(c.volts)) {
+                    Stop w = waitForBattery(job);
+                    if (w != null) return w;
+                }
                 fails = 0;
                 sinceCheck = 0;
+                lastCheckMs = clock.getAsLong();
             }
             Ecu.Reply r = readAddr(job, job.next);
             if (r == null) return Stop.NO_ANSWER;
@@ -151,6 +169,40 @@ public final class ReadRunner {
             if (job.next % ReadJob.FLUSH_EVERY == 0) job.flush();
         }
         return Stop.COMPLETE;
+    }
+
+    /**
+     * Low battery: save, stop sending flash reads, and keep checking (engine speed and battery only) until the
+     * voltage is back above the resume level. Returns null to carry on, or why the run ended.
+     */
+    private Stop waitForBattery(ReadJob job) throws IOException {
+        batteryPaused = true;
+        String v = String.format(java.util.Locale.US, "%.1f V", volts);
+        job.log(ts() + " BATTERY LOW " + v + ", read paused at " + String.format("%06X", job.next),
+                "Paused: battery low " + v);
+        job.flush();
+        try {
+            while (true) {
+                if (stopRequested) return Stop.PAUSED;
+                sleeper.accept(BatteryGuard.PAUSED_POLL_MS);
+                if (stopRequested) return Stop.PAUSED;
+                Ecu.Check c = ecu.check();
+                if (!c.answering) {
+                    if (++fails >= MAX_FAILS) return Stop.NO_ANSWER;
+                    continue;
+                }
+                fails = 0;
+                if (c.rpm > 0) return Stop.ENGINE_RUNNING;
+                volts = c.volts;
+                if (!guard.update(c.volts)) {
+                    String ok = String.format(java.util.Locale.US, "%.1f V", c.volts);
+                    job.log(ts() + " BATTERY OK " + ok + ", read resumed", "Resumed: battery " + ok);
+                    return null;
+                }
+            }
+        } finally {
+            batteryPaused = false;
+        }
     }
 
     /** One address, retried until it answers; null after 5 failed requests in a row. */

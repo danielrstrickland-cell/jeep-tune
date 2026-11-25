@@ -9,6 +9,7 @@ import android.provider.MediaStore;
 
 import android.content.Intent;
 
+import com.strickland.jeeptune.core.ExportText;
 import com.strickland.jeeptune.core.JobStore;
 import com.strickland.jeeptune.core.ReadJob;
 import com.strickland.jeeptune.core.Summary;
@@ -40,9 +41,13 @@ final class Saver {
 
     /** Opens the share sheet with summary.txt, flash.bin and log.txt. */
     static Intent shareIntent(ReadJob job) {
+        return shareIntent(job, "Send to Google Drive or another app", "summary.txt", "flash.bin", "log.txt");
+    }
+
+    private static Intent shareIntent(ReadJob job, String title, String... names) {
         JobFileProvider.root = job.dir.getParentFile();
         ArrayList<Uri> uris = new ArrayList<>();
-        for (String n : new String[]{"summary.txt", "flash.bin", "log.txt"}) {
+        for (String n : names) {
             if (new File(job.dir, n).exists()) uris.add(Uri.parse("content://" + JobFileProvider.AUTHORITY + "/" + job.id + "/" + n));
         }
         Intent i = new Intent(Intent.ACTION_SEND_MULTIPLE);
@@ -53,7 +58,17 @@ final class Saver {
         android.content.ClipData cd = android.content.ClipData.newRawUri("files", uris.get(0));
         for (int k = 1; k < uris.size(); k++) cd.addItem(new android.content.ClipData.Item(uris.get(k)));
         i.setClipData(cd);
-        return Intent.createChooser(i, "Send to Google Drive or another app").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return Intent.createChooser(i, title).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    }
+
+    /** Share sheet with the verified flash.bin plus a .sha256 text file (hash, file name, part number). No upload happens here. */
+    static Intent exportIntent(ReadJob job) throws IOException {
+        if (job.verifiedOf.isEmpty()) throw new IOException("not a verified copy");
+        job.flush();
+        String binName = "jeeptune-" + job.id + "-flash.bin";
+        String text = ExportText.sha256File(Summary.sha256(new File(job.dir, "flash.bin")), binName, "", job.id, "matches " + job.verifiedOf);
+        Files.write(new File(job.dir, "flash.sha256").toPath(), text.getBytes(StandardCharsets.UTF_8));
+        return shareIntent(job, "Export verified copy", "flash.bin", "flash.sha256");
     }
 
     private static void copy(Context c, File src, String name, String mime) throws IOException {

@@ -43,7 +43,7 @@ public final class MainActivity extends Activity {
 
     private TextView chipDongle, tvCheck1, tvCheck2, tvCheck3, ic1, ic2, ic3;
     private CheckBox charger;
-    private Button bAmount1, bAmount2, bTimeN, bTimeF, bTimeX, bMain, bSave, bCompare;
+    private Button bAmount1, bAmount2, bTimeN, bTimeF, bTimeX, bMain, bSave, bCompare, bExport;
     private TextView tvTitle, tvDone, tvAvg, tvRetries, tvLeft, tvSessions, tvSaved, tvMsg, tvBytes, tvLog;
     private ProgressBar bar;
 
@@ -60,14 +60,19 @@ public final class MainActivity extends Activity {
         eng = TuneApp.engine;
         eng.loadLatest();
         setContentView(build());
-        if (!eng.hasPermission()) requestPermissions(new String[]{android.Manifest.permission.BLUETOOTH_CONNECT}, 1);
+        java.util.ArrayList<String> need = new java.util.ArrayList<>();
+        if (!eng.hasPermission()) need.add(android.Manifest.permission.BLUETOOTH_CONNECT);
+        // Android 13+: without this the read still runs, but its notification is hidden
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            need.add(android.Manifest.permission.POST_NOTIFICATIONS);
+        if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), 1);
         else eng.begin();
         UpdateChecker.check(this, version(), false);
     }
 
     @Override
     public void onRequestPermissionsResult(int code, String[] p, int[] r) {
-        if (eng.hasPermission()) eng.begin();
+        if (eng.hasPermission()) eng.begin();   // begin() is a no-op when already started
     }
 
     @Override protected void onResume() { super.onResume(); ui.post(tick); }
@@ -215,7 +220,7 @@ public final class MainActivity extends Activity {
         ic1 = o[0]; tvCheck1 = o[1];
         before.addView(checkRow(o, "Engine computer answering"));
         ic2 = o[0]; tvCheck2 = o[1];
-        before.addView(checkRow(o, "Test stops below 12.0 V"));
+        before.addView(checkRow(o, "Pauses below 12.0 V, resumes above 12.4 V"));
         ic3 = o[0]; tvCheck3 = o[1];
         tvCheck1.setText("Engine off");
         tvCheck2.setText("Key on");
@@ -259,7 +264,8 @@ public final class MainActivity extends Activity {
         bMain.setOnClickListener(v -> onMain());
         left.addView(bMain, lp(-1, -2, 16));
         TextView note = text("Sends only flash-read requests (26). Nothing is written. Safe to stop any time: key off or close the app, "
-                + "and it picks up where it left off. Stops on its own if the engine starts, the battery drops below 12.0 V, "
+                + "and it picks up where it left off. Keeps reading with the screen off or the app closed (see the notification). "
+                + "Pauses if the battery drops below 12.0 V and carries on above 12.4 V. Stops on its own if the engine starts "
                 + "or 5 reads in a row get no answer.", 12, DIM, false);
         left.addView(note, lp(-1, -2, 10));
 
@@ -314,9 +320,14 @@ public final class MainActivity extends Activity {
         bCompare = button("Read again & compare", 48, 15);
         bSave.setOnClickListener(v -> onSave());
         bCompare.setOnClickListener(v -> onCompare());
+        bExport = button("Export verified copy", 48, 15);
+        bExport.setOnClickListener(v -> onExport());
+        bExport.setVisibility(View.GONE);
         acts.addView(bSave);
         acts.addView(bCompare, lp(-2, -2, 0));
         ((LinearLayout.LayoutParams) bCompare.getLayoutParams()).leftMargin = dp(12);
+        acts.addView(bExport, lp(-2, -2, 0));
+        ((LinearLayout.LayoutParams) bExport.getLayoutParams()).leftMargin = dp(12);
         TextView hint = text("Two matching full reads = a verified copy.", 13, DIM, false);
         acts.addView(hint, lp(-2, -2, 0));
         ((LinearLayout.LayoutParams) hint.getLayoutParams()).leftMargin = dp(12);
@@ -344,6 +355,7 @@ public final class MainActivity extends Activity {
             j.timing = timing;
             String why = eng.start(j);
             if (why != null) Toast.makeText(this, why, Toast.LENGTH_LONG).show();
+            else ReadService.launch(this);
         } catch (IOException e) {
             Toast.makeText(this, "Cannot create the job: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -356,7 +368,7 @@ public final class MainActivity extends Activity {
         if (why != null) { Toast.makeText(this, why, Toast.LENGTH_LONG).show(); return; }
         try {
             ReadJob second = eng.store.create(j.size, timing, j.compareTo.isEmpty() ? j.id : j.compareTo);
-            eng.start(second);
+            if (eng.start(second) == null) ReadService.launch(this);
         } catch (IOException e) {
             Toast.makeText(this, "Cannot create the job: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -376,6 +388,19 @@ public final class MainActivity extends Activity {
                 if (done) startActivity(Saver.shareIntent(j));
             });
         }, "saver").start();
+    }
+
+    private void onExport() {
+        final ReadJob j = eng.job;
+        if (j == null || j.verifiedOf.isEmpty() || eng.running) return;
+        new Thread(() -> {
+            try {
+                final android.content.Intent send = Saver.exportIntent(j);
+                ui.post(() -> startActivity(send));
+            } catch (IOException e) {
+                ui.post(() -> Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "export").start();
     }
 
     // ---------- drawing the state ----------
@@ -444,6 +469,16 @@ public final class MainActivity extends Activity {
                 msg = m.toString();
             }
         }
+        if (running) {
+            double v = eng.liveVolts();
+            String vs = v >= 0 ? String.format("%.1f V", v) : "-- V";
+            if (eng.lowBatteryPause()) {
+                msg = "Paused \u2014 low battery (" + vs + "). Carries on above 12.4 V.";
+                tvMsg.setTextColor(RED);
+            } else if (v >= 0) {
+                msg = "Battery " + vs;
+            }
+        }
         tvMsg.setText(msg == null ? "" : msg);
         tvMsg.setVisibility(msg == null || msg.isEmpty() ? View.GONE : View.VISIBLE);
 
@@ -454,6 +489,9 @@ public final class MainActivity extends Activity {
         boolean done = j != null && j.complete() && !running;
         style(bSave, false, j != null && !running && new java.io.File(j.dir, "log.txt").exists());
         style(bCompare, false, done && canStart);
+        boolean verified = j != null && !j.verifiedOf.isEmpty() && !running;
+        bExport.setVisibility(verified ? View.VISIBLE : View.GONE);
+        if (verified) style(bExport, false, true);
         if (running) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }

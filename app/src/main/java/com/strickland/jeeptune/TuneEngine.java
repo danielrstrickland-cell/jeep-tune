@@ -74,6 +74,21 @@ final class TuneEngine {
         return null;
     }
 
+    /** A read is queued or running. */
+    boolean active() { return running || pending != null; }
+
+    /** Last battery voltage seen by the running read, or -1. */
+    double liveVolts() {
+        ReadRunner r = runner;
+        return r == null ? -1 : r.volts;
+    }
+
+    /** The running read is waiting for the battery to recover. */
+    boolean lowBatteryPause() {
+        ReadRunner r = runner;
+        return r != null && r.batteryPaused;
+    }
+
     void pause() {
         ReadRunner r = runner;
         if (r != null) r.requestStop();
@@ -92,6 +107,7 @@ final class TuneEngine {
                 while (true) {
                     ReadJob p = pending;
                     if (p != null) {
+                        running = true;   // before pending clears, so active() never reads false in between
                         pending = null;
                         runJob(ecu, p);
                         continue;

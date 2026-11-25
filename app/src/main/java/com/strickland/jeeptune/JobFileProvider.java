@@ -12,7 +12,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.List;
 
-/** Read-only file provider for a job's flash.bin, log.txt and summary.txt (share sheet). */
+/** Read-only file provider for a job's flash.bin, flash.sha256, log.txt and summary.txt (share sheet). */
 public final class JobFileProvider extends ContentProvider {
     public static final String AUTHORITY = "com.strickland.jeeptune.files";
     static volatile File root;
@@ -22,7 +22,7 @@ public final class JobFileProvider extends ContentProvider {
         File r = root;
         if (r == null || p.size() != 2) throw new FileNotFoundException();
         String id = p.get(0), name = p.get(1);
-        if (id.contains("/") || id.contains("..") || !(name.equals("flash.bin") || name.equals("log.txt") || name.equals("summary.txt")))
+        if (id.contains("/") || id.contains("..") || !(name.equals("flash.bin") || name.equals("log.txt") || name.equals("summary.txt") || name.equals("flash.sha256")))
             throw new FileNotFoundException();
         File f = new File(new File(r, id), name);
         if (!f.exists()) throw new FileNotFoundException();
@@ -47,7 +47,10 @@ public final class JobFileProvider extends ContentProvider {
         }
     }
 
-    @Override public String getType(Uri uri) { return "application/octet-stream"; }
+    @Override public String getType(Uri uri) {
+        String n = uri.getLastPathSegment();
+        return n != null && (n.endsWith(".txt") || n.endsWith(".sha256")) ? "text/plain" : "application/octet-stream";
+    }
     @Override public Uri insert(Uri uri, ContentValues v) { throw new UnsupportedOperationException(); }
     @Override public int delete(Uri uri, String s, String[] a) { throw new UnsupportedOperationException(); }
     @Override public int update(Uri uri, ContentValues v, String s, String[] a) { throw new UnsupportedOperationException(); }

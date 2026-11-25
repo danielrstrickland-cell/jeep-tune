@@ -90,7 +90,7 @@ public final class Summary {
         }
     }
 
-    static String sha256(File f) throws IOException {
+    public static String sha256(File f) throws IOException {
         try {
             MessageDigest d = MessageDigest.getInstance("SHA-256");
             byte[] h = d.digest(Files.readAllBytes(f.toPath()));
