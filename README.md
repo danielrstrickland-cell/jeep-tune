@@ -32,6 +32,29 @@ Jeep Tune owns the dongle while reading. It tells Jeep Dash (`com.strickland.jee
 - Receiver side: register for the action (manifest receiver, exported) and treat the dongle as busy until `busy=false`
   or until about 90 s pass with no heartbeat (covers a killed Jeep Tune process).
 
+## Tables (calibration viewer)
+
+The **Tables** button on the main screen opens a **read-only** viewer for calibration tables in a `.bin` you already have
+(a saved read, or any file via the file picker). It never talks to the engine computer, sends no dongle frames (the `Frames.java`
+allow-list is untouched), and never writes or edits a `.bin`.
+
+- Shows the file name, a part-number check against the definition, and the SHA-256 (tap to copy).
+- Chips: Spark A, Spark B, After-start spark, Fuel A, Fuel B, Charge temp retard, Coolant retard, Idle spark curves, Idle rpm, 3-4 shift.
+  **Scalars** lists rev limit, speed constant and others with units. A `?` means the definition is not confirmed yet.
+- Views: **Grid** heat map (rpm rows, MAP columns, tap a cell for address, raw and scaled value; pinch to zoom, swipe to change table),
+  **3D** surface (drag to rotate) and **Slice** (slider picks an rpm row, value vs MAP). Curves show as a line chart.
+  Tables whose axes are not known yet show index numbers 0..n.
+- **Compare with...** (default pick: the first verified read): differing cells are outlined (warm = raised, cool = lowered),
+  **Changes** lists cells and bytes, including bytes outside any known table. **Ghost stock** draws the compare file under the 3D surface.
+- **Tune log...** loads a Jeep Dash tune-log CSV (header lines start with `#`; columns named rpm and MAP, any case). **Hit map** colors
+  cells by samples spent there. The replay bar plays, pauses and scrubs the log (1x / 4x / 16x) with a dot and a fading trail on the grid and 3D.
+- **Live dot:** while the viewer is open it listens for the broadcast `com.strickland.jeepdash.action.LIVE` from Jeep Dash
+  (float `rpm`, float `map_kpa`, long `t`) and shows a dot at the current cell.
+
+Definition: `app/src/main/assets/defs/56041519.json` (part 56041519AE). All decoding is in `:core` (`CalImage`, `CalTable`, `ImageDiff`,
+`TuneCsv`, `Replay`) with tests on a synthetic image; drawing sits behind `TableRenderer` (currently plotly.js, bundled in
+`app/src/main/assets/viewer/`, no network needed).
+
 ## Get the app
 
 Download `jeep-tune.apk` from the newest release: https://github.com/danielrstrickland-cell/jeep-tune/releases/latest

@@ -190,8 +190,13 @@ public final class MainActivity extends Activity {
         head.addView(h2);
         View sp = new View(this);
         head.addView(sp, new LinearLayout.LayoutParams(0, 1, 1));
+        Button bTables = button("Tables", 40, 14);
+        style(bTables, false, true);
+        bTables.setOnClickListener(v -> startActivity(new android.content.Intent(this, TablesActivity.class)));
+        head.addView(bTables, lp(-2, -2, 0));
         chipDongle = chip("Dongle: ...");
-        head.addView(chipDongle);
+        head.addView(chipDongle, lp(-2, -2, 0));
+        ((LinearLayout.LayoutParams) chipDongle.getLayoutParams()).leftMargin = dp(10);
         TextView c2 = chip("Chrysler SCI · 7812.5 baud");
         head.addView(c2, lp(-2, -2, 0));
         ((LinearLayout.LayoutParams) c2.getLayoutParams()).leftMargin = dp(10);

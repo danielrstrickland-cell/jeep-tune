@@ -1,0 +1,221 @@
+{
+ "part": "56041519AE",
+ "version": 2,
+ "image": {
+  "size": 262144,
+  "sha256": "2d3c2ff48c81177c95221f3392e75f3874c808b8b00a4267842fbea24362c88b"
+ },
+ "notes": "Draft v2. '?' = unconfirmed. Calibration also lives at 0x045A, 0x6009, 0x6F00-0x8440, 0xA000-0xA41B.",
+ "formats": {
+  "curve2d": "[hdr] then n (x,y) byte pairs; n = hdr & 0x7F; hdr bit7 = signed y",
+  "table3d_byte": "[rows][cols][flag] then rows*cols bytes row-major; flag 0xFF = signed",
+  "table3d_word": "[rows][cols][00][pad] then rows*cols big-endian u16"
+ },
+ "axes": {
+  "rpm17": {
+   "addr": "0x2649",
+   "type": "u16be[17]",
+   "scale": "rpm = raw/8"
+  },
+  "map9": {
+   "addr": "0x2855",
+   "type": "curve2d x values",
+   "scale": "kPa = raw/2.428"
+  },
+  "temp": {
+   "scale": "degC = raw-64"
+  }
+ },
+ "tables": [
+  {
+   "id": "sparkA",
+   "name": "Main spark A",
+   "addr": "0x2868",
+   "kind": "table3d_byte",
+   "rows": "rpm17",
+   "cols": "map9",
+   "scale": "deg = raw/2",
+   "confidence": "high",
+   "note": "active off idle"
+  },
+  {
+   "id": "sparkB",
+   "name": "Main spark B ?",
+   "addr": "0x2904",
+   "kind": "table3d_byte",
+   "rows": "rpm17",
+   "cols": "map9",
+   "scale": "deg = raw/2",
+   "confidence": "medium"
+  },
+  {
+   "id": "sparkC",
+   "name": "After-start spark",
+   "addr": "0x29A0",
+   "kind": "table3d_byte",
+   "rows": "rpm17",
+   "cols": "map9",
+   "scale": "deg = raw/2",
+   "confidence": "high"
+  },
+  {
+   "id": "fuelA",
+   "name": "Base fuel A",
+   "addr": "0x2B8E",
+   "kind": "table3d_word",
+   "rows": "rpm17",
+   "cols": "map9",
+   "scale": "ms = raw*0.0044 (log fit)",
+   "confidence": "high"
+  },
+  {
+   "id": "fuelB",
+   "name": "Base fuel B",
+   "addr": "0x2CC4",
+   "kind": "table3d_word",
+   "rows": "rpm17",
+   "cols": "map9",
+   "scale": "ms = raw*0.0044 (log fit)",
+   "confidence": "high",
+   "note": "differs from A in 29 cells, mostly 14.8 kPa column"
+  },
+  {
+   "id": "iatRetard",
+   "name": "Charge temp spark retard ?",
+   "addr": "0x2B2C",
+   "kind": "table3d_byte",
+   "rows": "? (9)",
+   "cols": "? (9)",
+   "scale": "deg = raw/2 signed",
+   "confidence": "medium",
+   "note": "IAT x MAP, 0 to -6 deg at high MAP"
+  },
+  {
+   "id": "ectRetard",
+   "name": "Coolant spark retard ?",
+   "addr": "0x2AD8",
+   "kind": "table3d_byte",
+   "rows": "? (9)",
+   "cols": "? (9)",
+   "scale": "deg = raw/2 signed",
+   "confidence": "medium",
+   "note": "down to -7 deg"
+  },
+  {
+   "id": "idleSparkPN",
+   "name": "Idle spark, Park/Neutral ?",
+   "addr": "0x2796",
+   "kind": "curve2d",
+   "x": "degC = raw-64",
+   "y": "deg = raw/2",
+   "confidence": "high",
+   "note": "P/N vs Drive split medium"
+  },
+  {
+   "id": "idleSparkDrive",
+   "name": "Idle spark, Drive ?",
+   "addr": "0x2783",
+   "kind": "curve2d",
+   "x": "degC = raw-64",
+   "y": "deg = raw/2",
+   "confidence": "high"
+  },
+  {
+   "id": "idleSparkLow",
+   "name": "Idle spark add, rpm below target",
+   "addr": "0x27AD",
+   "kind": "curve2d",
+   "x": "rpm error = raw*2",
+   "y": "deg = raw/2",
+   "confidence": "high",
+   "alt": "0x27C0"
+  },
+  {
+   "id": "idleSparkHigh",
+   "name": "Idle spark pull, rpm above target",
+   "addr": "0x27D3",
+   "kind": "curve2d",
+   "x": "rpm error = raw*2",
+   "y": "deg = raw/2 signed",
+   "confidence": "high",
+   "alt": "0x27E6"
+  },
+  {
+   "id": "idleRpmA",
+   "name": "Idle target rpm A ?",
+   "addr": "0x3AC8",
+   "kind": "curve2d",
+   "x": "degC = raw-64",
+   "y": "rpm = raw*8",
+   "confidence": "medium"
+  },
+  {
+   "id": "idleRpmB",
+   "name": "Idle target rpm B ?",
+   "addr": "0x3ADB",
+   "kind": "curve2d",
+   "x": "degC = raw-64",
+   "y": "rpm = raw*8",
+   "confidence": "medium"
+  },
+  {
+   "id": "shift34Up",
+   "name": "3-4 upshift ?",
+   "addr": "0xA108",
+   "kind": "curve2d",
+   "x": "mph = raw/2",
+   "y": "TPS counts above closed",
+   "confidence": "medium"
+  },
+  {
+   "id": "shift34Down",
+   "name": "3-4 downshift ?",
+   "addr": "0xA119",
+   "kind": "curve2d",
+   "x": "mph = raw/2",
+   "y": "TPS counts above closed",
+   "confidence": "medium"
+  }
+ ],
+ "scalars": [
+  {
+   "id": "afterStartSpark",
+   "name": "After-start idle spark",
+   "addr": "0x2782",
+   "type": "u8",
+   "scale": "deg = raw/2"
+  },
+  {
+   "id": "revLimit",
+   "name": "Rev limit (fuel cut)",
+   "addr": "0x3A78",
+   "type": "u16be",
+   "scale": "rpm = raw/8",
+   "stock": "5300"
+  },
+  {
+   "id": "revResume",
+   "name": "Rev limit hysteresis",
+   "addr": "0x3A76",
+   "type": "u16be",
+   "scale": "rpm = raw/8",
+   "stock": "400"
+  },
+  {
+   "id": "speedK",
+   "name": "Vehicle speed constant",
+   "addr": "0x045A",
+   "type": "u32be",
+   "scale": "mph*64 = raw / VSS period",
+   "stock": "28800000"
+  },
+  {
+   "id": "limpRev",
+   "name": "Fault-mode rev limit ?",
+   "addr": "0x6009",
+   "type": "u8",
+   "confidence": "medium"
+  }
+ ],
+ "checksum": "unknown"
+}

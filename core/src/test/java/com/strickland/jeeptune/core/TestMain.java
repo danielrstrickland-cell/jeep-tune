@@ -6,7 +6,7 @@ import java.lang.reflect.Modifier;
 
 /** Runs every public static void no-arg method (not starting with "_") of the listed test classes. */
 public final class TestMain {
-    static final Class<?>[] CLASSES = {XtoolFrameTest.class, FramesTest.class, ReadRunnerTest.class, BatteryGuardTest.class};
+    static final Class<?>[] CLASSES = {XtoolFrameTest.class, FramesTest.class, ReadRunnerTest.class, BatteryGuardTest.class, CalTest.class};
 
     public static void main(String[] args) {
         int passed = 0, failed = 0;

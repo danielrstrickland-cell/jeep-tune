@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; height: 100%; background: #0E1217; color: #C9D3DD; font-family: sans-serif; overflow: hidden; }
+  #plot { position: absolute; left: 0; top: 0; right: 0; bottom: 0; touch-action: none; }
+  #msg { position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: #A3AFBC; font-size: 15px; padding: 0 24px; }
+</style>
+</head>
+<body>
+<div id="plot"></div>
+<div id="msg">Open a .bin to see its tables.</div>
+<script src="plotly.min.js"></script>
+<script>
+// Drawing only. All numbers (decoding, compare, hit counts, replay position) come from the app as JSON.
+// jt.setTable({...}) jt.setMode(0 grid|1 3D|2 slice) jt.setHits(b) jt.setGhost(b) jt.setSlice(row)
+// jt.setDot(kind 0 replay|1 live, row, col) jt.setTrail(rows, cols, alphas)   (row/col are fractional table indices)
+var C = { bg: '#0E1217', fg: '#C9D3DD', grid: '#26303B', low: '#E6F1FB', high: '#BA7517', warm: '#E8590C', cool: '#2F8FE0', replay: '#FF4D4D', live: '#35D0BA' };
+var SCALE = [[0, C.low], [1, C.high]];
+var S = { t: null, mode: 0, hits: false, ghost: false, slice: 0, dots: [[NaN, NaN], [NaN, NaN]], trail: null, idx: {}, zoom: 1, cx: 0, cy: 0 };
+var el = document.getElementById('plot');
+
+function bridge() { return window.Android; }
+function fmt(v, d) { return (v === null || isNaN(v)) ? '' : v.toFixed(d); }
+function axLabel(v, d) { var s = v.toFixed(d); return d > 0 ? s.replace(/\.?0+$/, '') : s; }
+function range(n) { var a = []; for (var i = 0; i < n; i++) a.push(i); return a; }
+
+function interp(row, col) {
+  var t = S.t, v = t.vals;
+  row = Math.max(0, Math.min(t.rows - 1, row)); col = Math.max(0, Math.min(t.cols - 1, col));
+  var r0 = Math.floor(row), c0 = Math.floor(col), r1 = Math.min(t.rows - 1, r0 + 1), c1 = Math.min(t.cols - 1, c0 + 1);
+  var fr = row - r0, fc = col - c0;
+  var a = v[r0][c0] * (1 - fc) + v[r0][c1] * fc, b = v[r1][c0] * (1 - fc) + v[r1][c1] * fc;
+  return a * (1 - fr) + b * fr;
+}
+
+function baseLayout() {
+  return { paper_bgcolor: C.bg, plot_bgcolor: C.bg, font: { color: C.fg, size: 11 }, margin: { l: 56, r: 12, t: 12, b: 44 }, showlegend: false, dragmode: false };
+}
+
+function axisIdx(n, labels, title) {
+  return { tickvals: range(n), ticktext: labels, title: { text: title }, gridcolor: C.grid, zerolinecolor: C.grid, fixedrange: true, tickfont: { size: 10 } };
+}
+
+function dotTraces(three) {
+  var t = three ? 'scatter3d' : 'scatter';
+  var mk = function (color, size, sym) { return { type: t, mode: 'markers', x: [], y: [], z: three ? [] : undefined, hoverinfo: 'skip', marker: { color: color, size: size, symbol: sym, line: { color: '#fff', width: 1 } } }; };
+  var trail = { type: t, mode: 'markers', x: [], y: [], z: three ? [] : undefined, hoverinfo: 'skip', marker: { color: [], size: three ? 3 : 6 } };
+  return [trail, mk(C.replay, three ? 6 : 12, 'circle'), mk(C.live, three ? 6 : 12, 'diamond')];
+}
+
+function draw() {
+  var t = S.t, msg = document.getElementById('msg');
+  if (!t) { Plotly.purge(el); msg.style.display = 'block'; return; }
+  if (t.error) { Plotly.purge(el); msg.style.display = 'block'; msg.textContent = t.error; return; }
+  msg.style.display = 'none';
+  var useHits = S.hits && t.hits;
+  var traces = [], layout = baseLayout(), cfg = { displayModeBar: false, responsive: true, scrollZoom: false };
+  S.idx = {};
+  if (t.curve) {
+    var ys = t.vals[0];
+    if (t.ref) traces.push({ type: 'scatter', mode: 'lines+markers', x: t.refX, y: t.ref[0], line: { color: '#7F8C9A', dash: 'dot', width: 2 }, marker: { size: 5, color: '#7F8C9A' }, hoverinfo: 'skip' });
+    traces.push({ type: 'scatter', mode: 'lines+markers', x: t.colVals, y: ys, line: { color: '#F0A63A', width: 3 }, marker: { size: 9, color: '#F0A63A' }, hovertemplate: '%{x} ' + t.colUnit + '<br>%{y} ' + t.unit + '<extra></extra>' });
+    layout.xaxis = { title: { text: t.colTitle }, gridcolor: C.grid, fixedrange: true };
+    layout.yaxis = { title: { text: t.unit }, gridcolor: C.grid, fixedrange: true };
+    S.curveCurrent = traces.length - 1;
+  } else if (S.mode === 0) {
+    var z = useHits ? t.hits : t.vals;
+    var text = z.map(function (row, i) { return row.map(function (v, j) { return useHits ? (v ? String(v) : '') : fmt(v, t.dec); }); });
+    traces.push({ type: 'heatmap', x: range(t.cols), y: range(t.rows), z: z, text: text, texttemplate: '%{text}', textfont: { size: 11, color: '#1B1B1B' },
+      colorscale: SCALE, showscale: false, xgap: 1, ygap: 1, hoverinfo: 'none' });
+    var d = dotTraces(false);
+    S.idx = { trail: traces.length, replay: traces.length + 1, live: traces.length + 2 };
+    traces = traces.concat(d);
+    layout.xaxis = axisIdx(t.cols, t.colLabels, t.colTitle); layout.xaxis.side = 'top'; layout.xaxis.range = [-0.5, t.cols - 0.5];
+    layout.yaxis = axisIdx(t.rows, t.rowLabels, t.rowTitle); layout.yaxis.range = [t.rows - 0.5, -0.5];
+    layout.margin = { l: 64, r: 12, t: 52, b: 12 };
+    if (t.chg && !useHits) {
+      layout.shapes = [];
+      for (var i = 0; i < t.rows; i++) for (var j = 0; j < t.cols; j++) {
+        var s = t.chg[i][j];
+        if (!s) continue;
+        layout.shapes.push({ type: 'rect', xref: 'x', yref: 'y', x0: j - 0.5, x1: j + 0.5, y0: i - 0.5, y1: i + 0.5, fillcolor: 'rgba(0,0,0,0)', line: { color: s > 0 ? C.warm : C.cool, width: 3 } });
+      }
+    }
+  } else if (S.mode === 1) {
+    var hover = t.vals.map(function (row, i) { return row.map(function (v, j) { return t.rowLabels[i] + ' ' + t.rowTitle + '<br>' + t.colLabels[j] + ' ' + t.colTitle + '<br>' + fmt(v, t.dec) + ' ' + t.unit; }); });
+    if (S.ghost && t.ref) traces.push({ type: 'surface', x: range(t.cols), y: range(t.rows), z: t.ref, colorscale: [[0, '#7F9BB5'], [1, '#7F9BB5']], showscale: false, opacity: 0.35, hoverinfo: 'skip' });
+    traces.push({ type: 'surface', x: range(t.cols), y: range(t.rows), z: t.vals, surfacecolor: useHits ? t.hits : t.vals, colorscale: SCALE, showscale: false,
+      opacity: 0.96, text: hover, hovertemplate: '%{text}<extra></extra>' });
+    var d3 = dotTraces(true);
+    S.idx = { trail: traces.length, replay: traces.length + 1, live: traces.length + 2 };
+    traces = traces.concat(d3);
+    layout.margin = { l: 0, r: 0, t: 0, b: 0 };
+    var ax = function (n, labels, title) { return { tickvals: range(n), ticktext: labels, title: { text: title }, gridcolor: C.grid, backgroundcolor: C.bg, showbackground: true, tickfont: { size: 9 } }; };
+    layout.scene = { xaxis: ax(t.cols, t.colLabels, t.colTitle), yaxis: ax(t.rows, t.rowLabels, t.rowTitle), zaxis: { title: { text: t.unit }, gridcolor: C.grid, backgroundcolor: C.bg, showbackground: true },
+      aspectmode: 'manual', aspectratio: { x: 1.2, y: 1.6, z: 0.8 }, camera: { eye: { x: 1.7, y: -1.7, z: 1.1 } } };
+    layout.dragmode = 'turntable';
+    cfg.scrollZoom = true;
+  } else {
+    var r = Math.max(0, Math.min(t.rows - 1, S.slice));
+    if (t.ref) traces.push({ type: 'scatter', mode: 'lines+markers', x: t.colVals, y: t.ref[r], line: { color: '#7F8C9A', dash: 'dot', width: 2 }, marker: { size: 5, color: '#7F8C9A' }, hoverinfo: 'skip' });
+    traces.push({ type: 'scatter', mode: 'lines+markers', x: t.colVals, y: t.vals[r], line: { color: '#F0A63A', width: 3 }, marker: { size: 9, color: '#F0A63A' },
+      hovertemplate: '%{x} ' + t.colUnit + '<br>%{y} ' + t.unit + '<extra></extra>' });
+    layout.xaxis = { title: { text: t.colTitle }, gridcolor: C.grid, fixedrange: true };
+    layout.yaxis = { title: { text: t.unit + ' at ' + t.rowLabels[r] + ' ' + t.rowUnit }, gridcolor: C.grid, fixedrange: true };
+  }
+  Plotly.react(el, traces, layout, cfg).then(function () { hook(); if (S.mode === 0 && !t.curve) applyZoom(); updateDots(); });
+}
+
+var hooked = null;
+function hook() {
+  if (hooked === el._fullLayout) return;
+  hooked = el._fullLayout;
+  if (typeof el.removeAllListeners === 'function') el.removeAllListeners('plotly_click');
+  el.on('plotly_click', function (d) {
+    var p = d.points && d.points[0];
+    if (!p || !S.t) return;
+    var r = 0, c = 0;
+    if (S.t.curve) c = p.pointNumber;
+    else if (S.mode === 2) { r = S.slice; c = p.pointNumber; }
+    else if (Array.isArray(p.pointNumber)) { r = p.pointNumber[0]; c = p.pointNumber[1]; }
+    else return;
+    if (bridge()) bridge().cell(r, c);
+  });
+}
+
+function rgba(a) { return 'rgba(255,77,77,' + a.toFixed(2) + ')'; }
+
+function updateDots() {
+  var t = S.t;
+  if (!t || t.error || t.curve || S.mode === 2 || S.idx.trail === undefined) return;
+  var three = S.mode === 1, zs = (t.zmax - t.zmin) * 0.03;
+  var tr = S.trail, ok = function (a) { return !isNaN(a[0]) && !isNaN(a[1]); };
+  var upd = {}, ids = [];
+  var trx = [], try_ = [], trz = [], trc = [];
+  if (tr) for (var i = 0; i < tr.rows.length; i++) { trx.push(tr.cols[i]); try_.push(tr.rows[i]); if (three) trz.push(interp(tr.rows[i], tr.cols[i]) + zs); trc.push(rgba(tr.alphas[i])); }
+  var a = { x: [trx], y: [try_], 'marker.color': [trc] };
+  if (three) a.z = [trz];
+  Plotly.restyle(el, a, [S.idx.trail]);
+  [0, 1].forEach(function (k) {
+    var p = S.dots[k], good = ok(p), o = { x: [good ? [p[1]] : []], y: [good ? [p[0]] : []] };
+    if (three) o.z = [good ? [interp(p[0], p[1]) + zs] : []];
+    Plotly.restyle(el, o, [k === 0 ? S.idx.replay : S.idx.live]);
+  });
+}
+
+// ---- touch: pinch-zoom and pan on the grid, swipe to change table (not in 3D, which uses its own gestures) ----
+var tp = null;
+function applyZoom() {
+  var t = S.t; if (!t || t.curve || S.mode !== 0) return;
+  var z = S.zoom, w = t.cols / z, h = t.rows / z;
+  S.cx = Math.max(w / 2 - 0.5, Math.min(t.cols - 0.5 - w / 2, S.cx));
+  S.cy = Math.max(h / 2 - 0.5, Math.min(t.rows - 0.5 - h / 2, S.cy));
+  Plotly.relayout(el, { 'xaxis.range': [S.cx - w / 2, S.cx + w / 2], 'yaxis.range': [S.cy + h / 2, S.cy - h / 2] });
+}
+function dist(e) { var a = e.touches[0], b = e.touches[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+el.addEventListener('touchstart', function (e) {
+  if (S.mode === 1) return;
+  if (e.touches.length === 2) tp = { pinch: true, d: dist(e), z: S.zoom };
+  else if (e.touches.length === 1) tp = { x: e.touches[0].clientX, y: e.touches[0].clientY, cx: S.cx, cy: S.cy, moved: false };
+}, { passive: true });
+el.addEventListener('touchmove', function (e) {
+  if (!tp || S.mode !== 0 || !S.t || S.t.curve) return;
+  if (tp.pinch && e.touches.length === 2) {
+    e.preventDefault();
+    S.zoom = Math.max(1, Math.min(6, tp.z * dist(e) / tp.d));
+    if (S.zoom === 1) { S.cx = S.t.cols / 2 - 0.5; S.cy = S.t.rows / 2 - 0.5; }
+    applyZoom();
+  } else if (!tp.pinch && S.zoom > 1 && e.touches.length === 1) {
+    e.preventDefault();
+    var r = el.getBoundingClientRect(), t = S.t;
+    S.cx = tp.cx - (e.touches[0].clientX - tp.x) / r.width * (t.cols / S.zoom);
+    S.cy = tp.cy - (e.touches[0].clientY - tp.y) / r.height * (t.rows / S.zoom);
+    tp.moved = true;
+    applyZoom();
+  }
+}, { passive: false });
+el.addEventListener('touchend', function (e) {
+  if (!tp || tp.pinch || S.mode === 1) { if (e.touches.length === 0) tp = null; return; }
+  var c = e.changedTouches[0], dx = c.clientX - tp.x, dy = c.clientY - tp.y;
+  var zoomed = S.mode === 0 && S.zoom > 1;
+  if (!zoomed && Math.abs(dx) > 90 && Math.abs(dy) < Math.abs(dx) / 2 && bridge()) bridge().swipe(dx < 0 ? 1 : -1);
+  tp = null;
+}, { passive: true });
+
+var jt = {
+  setTable: function (t) {
+    var same = S.t && t && S.t.id === t.id;
+    S.t = t;
+    if (t && !t.error) {
+      var mn = Infinity, mx = -Infinity;
+      t.vals.forEach(function (r) { r.forEach(function (v) { mn = Math.min(mn, v); mx = Math.max(mx, v); }); });
+      t.zmin = mn; t.zmax = mx;
+      if (t.rows) S.slice = Math.min(S.slice, t.rows - 1);
+      if (!t.curve) { t.colVals = t.colVals || range(t.cols); }
+    }
+    if (!same) { S.zoom = 1; if (t) { S.cx = (t.cols || 1) / 2 - 0.5; S.cy = (t.rows || 1) / 2 - 0.5; } }
+    draw();
+  },
+  setMode: function (m) { S.mode = m; draw(); },
+  setHits: function (b) { S.hits = !!b; draw(); },
+  setGhost: function (b) { S.ghost = !!b; draw(); },
+  setSlice: function (r) { S.slice = r; if (S.mode === 2) draw(); },
+  setDot: function (kind, row, col) { S.dots[kind] = [row === null ? NaN : row, col === null ? NaN : col]; updateDots(); },
+  setTrail: function (rows, cols, alphas) { S.trail = rows && rows.length ? { rows: rows, cols: cols, alphas: alphas } : null; updateDots(); }
+};
+window.jt = jt;
+if (window.Android) window.Android.ready();
+</script>
+</body>
+</html>
